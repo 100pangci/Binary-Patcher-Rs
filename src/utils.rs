@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::io::Read;
-use sha2::{Sha256, Digest};
+use ring::digest::{Context, SHA256};
 use walkdir::WalkDir;
 
 pub fn format_size(size_bytes: u64) -> String {
@@ -17,23 +17,26 @@ pub fn format_size(size_bytes: u64) -> String {
 
 pub fn sha256_of_file(path: &Path) -> anyhow::Result<String> {
     let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
+    let mut ctx = Context::new(&SHA256);
     let mut buffer = vec![0u8; 1024 * 1024];
     loop {
         let bytes_read = file.read(&mut buffer)?;
         if bytes_read == 0 {
             break;
         }
-        hasher.update(&buffer[..bytes_read]);
+        ctx.update(&buffer[..bytes_read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(sha256_hex(ctx.finish()))
 }
 
 pub fn sha256_of_bytes(data: &[u8]) -> String {
-    use sha2::Digest;
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    let mut ctx = Context::new(&SHA256);
+    ctx.update(data);
+    sha256_hex(ctx.finish())
+}
+
+fn sha256_hex(digest: ring::digest::Digest) -> String {
+    digest.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {

@@ -8,7 +8,7 @@ description = "A small tool for creating and applying binary patches with HDiffP
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+ring = "0.17"
 walkdir = "2"
 anyhow = "1"
 chrono = "0.4"
