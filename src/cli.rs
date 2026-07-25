@@ -18,6 +18,13 @@ pub struct Cli {
     )]
     pub no_compress: bool,
 
+    #[arg(
+        long = "stream",
+        default_value_t = false,
+        help = "强制使用流式模式创建补丁（降低内存占用，但补丁体积可能更大）"
+    )]
+    pub force_stream: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

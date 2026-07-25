@@ -123,7 +123,7 @@ binary_patcher
 | `apply <旧文件> <补丁文件> <输出文件>` | 应用单个补丁 |
 | `bundle --base-dir <路径>` | 指定工作目录执行打包 |
 | `--no-compress` | 禁用补丁压缩（默认启用 zlib 压缩） |
-| `--copy-scripts` | （兼容选项，Rust 版本无效） |
+| `--stream` | 强制使用流式模式创建补丁（降低内存占用，补丁体积可能更大） |
 
 ### `apply_patch`
 

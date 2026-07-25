@@ -11,6 +11,46 @@ pub fn get_recommended_thread_count() -> u32 {
     (cpu_count.saturating_sub(1)).max(1).min(MAX_PATCH_THREADS as usize) as u32
 }
 
+/// In-memory patch creation (best quality, suffix-string matching).
+/// Caller must provide pre-read data to avoid duplicate I/O.
+pub fn run_hdiffz_mem(
+    old_data: &[u8],
+    new_data: &[u8],
+    patch_file: &Path,
+    thread_count: u32,
+    use_compression: bool,
+) -> anyhow::Result<u32> {
+    crate::utils::ensure_parent_dir(patch_file)?;
+
+    let patch_data = ffi::create_patch(old_data, new_data, thread_count, use_compression)
+        .map_err(|e| anyhow::anyhow!("创建补丁失败: {e}"))?;
+    std::fs::write(patch_file, &patch_data)
+        .map_err(|e| anyhow::anyhow!("写入补丁文件失败 {}: {e}", patch_file.display()))?;
+    Ok(thread_count)
+}
+
+/// File-streaming patch creation (lower memory, larger patch size).
+pub fn run_hdiffz_stream(
+    old_file: &Path,
+    new_file: &Path,
+    patch_file: &Path,
+    thread_count: u32,
+    use_compression: bool,
+) -> anyhow::Result<u32> {
+    crate::utils::ensure_parent_dir(patch_file)?;
+
+    ffi::create_patch_file(
+        &old_file.to_string_lossy(),
+        &new_file.to_string_lossy(),
+        &patch_file.to_string_lossy(),
+        thread_count,
+        use_compression,
+    )
+    .map_err(|e| anyhow::anyhow!("创建补丁失败: {e}"))?;
+    Ok(thread_count)
+}
+
+/// Auto-select: in-memory if data fits, otherwise stream from disk.
 pub fn run_hdiffz(
     old_file: &Path,
     new_file: &Path,
@@ -20,14 +60,6 @@ pub fn run_hdiffz(
     let thread_count = get_recommended_thread_count();
 
     crate::utils::ensure_parent_dir(patch_file)?;
-
-    let old_size = std::fs::metadata(old_file)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    let new_size = std::fs::metadata(new_file)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
 
     // Try in-memory first (best patch quality, suffix-string matching)
     let mem_result = (|| -> anyhow::Result<()> {
@@ -46,17 +78,12 @@ pub fn run_hdiffz(
         Ok(()) => Ok(thread_count),
         Err(e) => {
             let msg = e.to_string();
+            let old_size = std::fs::metadata(old_file).map(|m| m.len()).unwrap_or(0);
+            let new_size = std::fs::metadata(new_file).map(|m| m.len()).unwrap_or(0);
+            let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
             if msg.contains("内存") || msg.contains("memory") || msg.contains("OOM") {
                 eprintln!("注意: 内存不足（{:.1}GB 文件），自动切换到流式模式", total_gb);
-                ffi::create_patch_file(
-                    &old_file.to_string_lossy(),
-                    &new_file.to_string_lossy(),
-                    &patch_file.to_string_lossy(),
-                    thread_count,
-                    use_compression,
-                )
-                .map_err(|e2| anyhow::anyhow!("流式模式也失败: {e2}"))?;
-                Ok(thread_count)
+                run_hdiffz_stream(old_file, new_file, patch_file, thread_count, use_compression)
             } else {
                 Err(e)
             }

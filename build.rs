@@ -76,6 +76,8 @@ fn main() {
 
     // Compile C files (not C++)
     let mut c_build = cc::Build::new();
+    c_build.define("NDEBUG", None);          // disable assert(), matches upstream -DNDEBUG
+    c_build.opt_level(3);                    // -O3 (upstream default)
     for inc in includes {
         c_build.include(inc);
     }
@@ -104,6 +106,8 @@ fn main() {
 
     // Compile C++ files
     let mut cpp_build = cc::Build::new();
+    cpp_build.define("NDEBUG", None);          // disable assert()
+    cpp_build.opt_level(3);                    // -O3 (upstream default)
     for inc in includes {
         cpp_build.include(inc);
     }

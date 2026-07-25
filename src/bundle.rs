@@ -1,9 +1,9 @@
-use crate::hdiffpatch::run_hdiffz;
+use crate::hdiffpatch::{get_recommended_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{Manifest, ChangedEntry, AddedEntry, DeletedEntry, INSTRUCTIONS_NAME};
-use crate::utils::{format_size, sha256_of_file, relative_file_map, ensure_parent_dir};
+use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, ensure_parent_dir};
 use std::path::Path;
 
-pub fn build_patch_bundle(base_dir: &Path, use_compression: bool) -> anyhow::Result<()> {
+pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, force_stream: bool) -> anyhow::Result<()> {
     let old_dir = base_dir.join("Old");
     let new_dir = base_dir.join("New");
     let patch_dir = base_dir.join("Patch");
@@ -33,15 +33,28 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool) -> anyhow::Res
 
         match (old_path, new_path) {
             (Some(old), Some(new)) => {
-                let old_hash = sha256_of_file(old)?;
-                let new_hash = sha256_of_file(new)?;
-                if old_hash == new_hash {
-                    continue;
-                }
-
+                let (old_hash, new_hash);
                 let patch_output = patch_dir.join(format!("{relative_path}.patch"));
-                println!("[变更] {relative_path}");
-                create_patch(old, new, &patch_output, use_compression)?;
+
+                if force_stream {
+                    // Stream mode: read files incrementally for SHA256 only, diff via file paths
+                    old_hash = sha256_of_file(old)?;
+                    new_hash = sha256_of_file(new)?;
+                    if old_hash == new_hash { continue; }
+                    println!("[变更] {relative_path}");
+                    create_patch_stream(old, new, &patch_output, use_compression)?;
+                } else {
+                    // Memory mode: read once for both SHA256 and diff
+                    let old_data = std::fs::read(old)
+                        .map_err(|e| anyhow::anyhow!("读取旧文件失败 {}: {e}", old.display()))?;
+                    let new_data = std::fs::read(new)
+                        .map_err(|e| anyhow::anyhow!("读取新文件失败 {}: {e}", new.display()))?;
+                    old_hash = sha256_of_bytes(&old_data);
+                    new_hash = sha256_of_bytes(&new_data);
+                    if old_hash == new_hash { continue; }
+                    println!("[变更] {relative_path}");
+                    create_patch_mem(&old_data, &new_data, &patch_output, use_compression)?;
+                }
                 manifest.changed.push(ChangedEntry {
                     path: relative_path.clone(),
                     old_sha256: old_hash,
@@ -54,7 +67,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool) -> anyhow::Res
                 let added_output = patch_dir.join(format!("{relative_path}.new"));
                 ensure_parent_dir(&added_output)?;
                 std::fs::copy(new, &added_output)?;
-                let new_hash = sha256_of_file(new)?;
+                let new_hash = crate::utils::sha256_of_file(new)?;
                 println!("[新增] {relative_path}");
                 manifest.added.push(AddedEntry {
                     path: relative_path.clone(),
@@ -64,7 +77,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool) -> anyhow::Res
                 added_count += 1;
             }
             (Some(old), None) => {
-                let old_hash = sha256_of_file(old)?;
+                let old_hash = crate::utils::sha256_of_file(old)?;
                 println!("[删除] {relative_path}");
                 manifest.deleted.push(DeletedEntry {
                     path: relative_path.clone(),
@@ -88,16 +101,33 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool) -> anyhow::Res
     Ok(())
 }
 
-fn create_patch(old_file: &Path, new_file: &Path, patch_file: &Path, use_compression: bool) -> anyhow::Result<()> {
+fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_compression: bool) -> anyhow::Result<()> {
+    ensure_parent_dir(patch_file)?;
+    let old_size = old_data.len();
+    let new_size = new_data.len();
+
+    println!("  正在调用 HDiffPatch 生成补丁...");
+    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_recommended_thread_count(), use_compression)?;
+    let patch_size = std::fs::metadata(patch_file)?.len();
+
+    println!("  {}", "-".repeat(30));
+    println!("  补丁创建成功！");
+    println!("    - 使用线程数: {thread_count}");
+    println!("    - 旧文件大小: {}", format_size(old_size as u64));
+    println!("    - 新文件大小: {}", format_size(new_size as u64));
+    println!("    - 补丁文件大小: {}", format_size(patch_size));
+    println!("  {}", "-".repeat(30));
+
+    Ok(())
+}
+
+fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_compression: bool) -> anyhow::Result<()> {
     ensure_parent_dir(patch_file)?;
     let old_size = std::fs::metadata(old_file)?.len();
     let new_size = std::fs::metadata(new_file)?.len();
 
-    println!("  正在读取旧文件: {}", old_file.display());
-    println!("  正在读取新文件: {}", new_file.display());
     println!("  正在调用 HDiffPatch 生成补丁...");
-
-    let thread_count = run_hdiffz(old_file, new_file, patch_file, use_compression)?;
+    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_recommended_thread_count(), use_compression)?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));

@@ -58,6 +58,9 @@ pub fn create_patch(
     };
 
     if ret != 0 {
+        if !out_patch.is_null() {
+            unsafe { hdiffpatch_free(out_patch as *mut c_void); }
+        }
         return Err("创建补丁失败".to_string());
     }
 
@@ -126,6 +129,9 @@ pub fn apply_patch(
     };
 
     if ret != 0 {
+        if !out_new_data.is_null() {
+            unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+        }
         let msg = match ret {
             -1 => "无法解析补丁文件头部信息（补丁格式不兼容或文件损坏）",
             -2 => "内存不足，无法分配输出缓冲区",

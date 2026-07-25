@@ -29,6 +29,13 @@ pub fn sha256_of_file(path: &Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+pub fn sha256_of_bytes(data: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
 pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -128,17 +135,29 @@ pub fn restore_backup(target_path: &Path) -> anyhow::Result<bool> {
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("无效的文件路径: {}", target_path.display()))?;
 
-    let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
-    let backup_path = target_path.with_file_name(&backup_name);
+    let parent = target_path.parent().unwrap_or(Path::new("."));
+    let backup_prefix = format!("{file_name}{BACKUP_SUFFIX}");
 
-    if !backup_path.exists() {
-        return Ok(false);
+    // Find newest matching backup (handles both plain and timestamped names)
+    let backup_path = std::fs::read_dir(parent)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&backup_prefix))
+        })
+        .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok());
+
+    match backup_path {
+        Some(path) => {
+            ensure_parent_dir(target_path)?;
+            std::fs::copy(&path, target_path)?;
+            std::fs::remove_file(&path)?;
+            Ok(true)
+        }
+        None => Ok(false),
     }
-
-    ensure_parent_dir(target_path)?;
-    std::fs::copy(&backup_path, target_path)?;
-    std::fs::remove_file(&backup_path)?;
-    Ok(true)
 }
 
 pub fn copy_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
