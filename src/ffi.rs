@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::os::raw::c_char;
 use std::ptr::null_mut;
 
 unsafe extern "C" {
@@ -9,6 +10,14 @@ unsafe extern "C" {
         new_size: usize,
         out_patch: *mut *mut u8,
         out_patch_size: *mut usize,
+        thread_num: i32,
+        use_compression: i32,
+    ) -> i32;
+
+    fn hdiffpatch_create_file(
+        old_file: *const c_char,
+        new_file: *const c_char,
+        patch_file: *const c_char,
         thread_num: i32,
         use_compression: i32,
     ) -> i32;
@@ -61,6 +70,41 @@ pub fn create_patch(
     Ok(patch)
 }
 
+pub fn create_patch_file(
+    old_file: &str,
+    new_file: &str,
+    patch_file: &str,
+    thread_num: u32,
+    use_compression: bool,
+) -> Result<(), String> {
+    let old_c = std::ffi::CString::new(old_file).map_err(|e| format!("无效路径: {e}"))?;
+    let new_c = std::ffi::CString::new(new_file).map_err(|e| format!("无效路径: {e}"))?;
+    let patch_c = std::ffi::CString::new(patch_file).map_err(|e| format!("无效路径: {e}"))?;
+
+    let ret = unsafe {
+        hdiffpatch_create_file(
+            old_c.as_ptr(),
+            new_c.as_ptr(),
+            patch_c.as_ptr(),
+            thread_num as i32,
+            use_compression as i32,
+        )
+    };
+
+    if ret != 0 {
+        let msg = match ret {
+            -1 => "创建补丁失败或内部异常",
+            -5 => "无法打开旧文件",
+            -6 => "无法打开新文件",
+            -7 => "无法创建补丁文件",
+            _ => "创建补丁失败",
+        };
+        return Err(format!("{msg} (错误码: {ret})"));
+    }
+
+    Ok(())
+}
+
 pub fn apply_patch(
     old_data: &[u8],
     patch_data: &[u8],
@@ -82,7 +126,14 @@ pub fn apply_patch(
     };
 
     if ret != 0 {
-        return Err("应用补丁失败".to_string());
+        let msg = match ret {
+            -1 => "无法解析补丁文件头部信息（补丁格式不兼容或文件损坏）",
+            -2 => "内存不足，无法分配输出缓冲区",
+            -3 => "应用补丁执行失败",
+            -4 => "应用补丁时发生内部异常",
+            _ => "应用补丁失败",
+        };
+        return Err(format!("{msg} (错误码: {ret})"));
     }
 
     let new_data = unsafe {

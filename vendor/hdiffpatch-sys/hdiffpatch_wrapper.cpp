@@ -4,6 +4,7 @@
 
 #include "libHDiffPatch/HDiff/diff.h"
 #include "libHDiffPatch/HPatch/patch.h"
+#include "file_for_patch.h"
 
 // Enable zlib compression plugin
 #define _CompressPlugin_zlib 1
@@ -28,7 +29,7 @@ static hpatch_BOOL on_diff_info(sspatch_listener_t* listener,
         *out_decompressPlugin = nullptr;
     }
 
-    size_t cacheSize = (size_t)info->stepMemSize + hpatch_kStreamCacheSize * 3;
+    size_t cacheSize = (size_t)info->stepMemSize + ((size_t)1 << 20); // stepMem + 1 MB for MT overhead
     auto* cache = (Cache*)listener->import;
     cache->data = (unsigned char*)std::malloc(cacheSize);
     if (!cache->data && cacheSize > 0)
@@ -81,6 +82,75 @@ int hdiffpatch_create(
     }
 }
 
+int hdiffpatch_create_file(
+    const char* old_file,
+    const char* new_file,
+    const char* patch_file,
+    int thread_num,
+    int use_compression)
+{
+    hpatch_TFileStreamInput  oldStream;
+    hpatch_TFileStreamInput  newStream;
+    hpatch_TFileStreamOutput patchStream;
+    int ret = 0;
+
+    hpatch_TFileStreamInput_init(&oldStream);
+    hpatch_TFileStreamInput_init(&newStream);
+    hpatch_TFileStreamOutput_init(&patchStream);
+
+    if (!hpatch_TFileStreamInput_open(&oldStream, old_file))
+        { ret = -5; goto cleanup; }
+    if (!hpatch_TFileStreamInput_open(&newStream, new_file))
+        { ret = -6; goto cleanup; }
+    if (!hpatch_TFileStreamOutput_open(&patchStream, patch_file, ~(hpatch_StreamPos_t)0))
+        { ret = -7; goto cleanup; }
+    hpatch_TFileStreamOutput_setRandomOut(&patchStream, hpatch_TRUE);
+
+    try {
+        const hdiff_TCompress* compress = nullptr;
+        if (use_compression)
+            compress = (const hdiff_TCompress*)&zlibCompressPlugin;
+
+        size_t capped_threads = (size_t)thread_num;
+        if (capped_threads < 1) capped_threads = 1;
+        if (capped_threads > 5) capped_threads = 5;
+
+        const hdiff_TMTSets_s mtsets = {
+            capped_threads,    // threadNum
+            capped_threads,    // threadNumForSearch
+            hpatch_TRUE,       // newDataIsMTSafe
+            hpatch_TRUE        // oldDataIsMTSafe
+        };
+
+        // kMatchBlockSize trades memory vs patch quality:
+        //   smaller = less memory, larger patch; larger = more memory, smaller patch.
+        //   recommended range: 16..16384. Scale up based on old file size to stay
+        //   under ~400 MB peak memory.  (hash ≈ oldSize / blockSize * 16)
+        hpatch_StreamPos_t oldSize = oldStream.base.streamSize;
+        size_t kMatchBlockSize = 64; // default (hdiffz)
+        if      (oldSize > 500ULL << 20) kMatchBlockSize = 256; // 1.26GB*16/256≈79MB
+        else if (oldSize > 100ULL << 20) kMatchBlockSize = 128;
+
+        create_single_compressed_diff_stream(
+            &newStream.base,
+            &oldStream.base,
+            &patchStream.base,
+            compress,
+            1024 * 256,
+            kMatchBlockSize,
+            &mtsets
+        );
+    } catch (...) {
+        ret = -1;
+    }
+
+cleanup:
+    if (patchStream.m_file) hpatch_TFileStreamOutput_close(&patchStream);
+    if (newStream.m_file)   hpatch_TFileStreamInput_close(&newStream);
+    if (oldStream.m_file)   hpatch_TFileStreamInput_close(&oldStream);
+    return ret;
+}
+
 int hdiffpatch_apply(
     const unsigned char* old_data, size_t old_size,
     const unsigned char* patch_data, size_t patch_size,
@@ -90,12 +160,20 @@ int hdiffpatch_apply(
     try {
         hpatch_singleCompressedDiffInfo diffInfo;
         if (!getSingleCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size))
-            return -1;
+            return -1; // patch header parse error
 
         size_t new_size = (size_t)diffInfo.newDataSize;
         *out_new_size = new_size;
         *out_new_data = (unsigned char*)std::malloc(new_size);
-        if (!*out_new_data) return -1;
+        if (!*out_new_data) return -2; // output buffer malloc failed
+
+        // Wrap in-memory buffers as streams for patch_single_stream (supports MT)
+        hpatch_TStreamOutput out_newStream;
+        hpatch_TStreamInput  oldStream;
+        hpatch_TStreamInput  diffStream;
+        mem_as_hStreamOutput(&out_newStream, *out_new_data, *out_new_data + new_size);
+        mem_as_hStreamInput(&oldStream, old_data, old_data + old_size);
+        mem_as_hStreamInput(&diffStream, patch_data, patch_data + patch_size);
 
         Cache cache = { nullptr };
         sspatch_listener_t listener;
@@ -104,21 +182,27 @@ int hdiffpatch_apply(
         listener.onDiffInfo = on_diff_info;
         listener.onPatchFinish = on_patch_finish;
 
-        hpatch_BOOL result = patch_single_stream_mem(
+        // Cap thread count at 5 (HDiffPatch supported range, same as hpatchz -p-)
+        size_t capped_threads = (size_t)thread_num;
+        if (capped_threads < 1) capped_threads = 1;
+        if (capped_threads > 5) capped_threads = 5;
+
+        hpatch_BOOL result = patch_single_stream(
             &listener,
-            *out_new_data, *out_new_data + new_size,
-            old_data, old_data + old_size,
-            patch_data, patch_data + patch_size,
-            nullptr,
-            (size_t)thread_num
+            &out_newStream,
+            &oldStream,
+            &diffStream,
+            0,           // diffInfo_pos
+            nullptr,     // coversListener
+            capped_threads
         );
 
         if (!result) {
-            if (cache.data) std::free(cache.data);
+            // onPatchFinish already freed cache.data via listener
             std::free(*out_new_data);
             *out_new_data = nullptr;
             *out_new_size = 0;
-            return -1;
+            return -3; // patch apply failed
         }
         return 0;
     } catch (...) {
@@ -127,7 +211,7 @@ int hdiffpatch_apply(
             *out_new_data = nullptr;
         }
         *out_new_size = 0;
-        return -1;
+        return -4; // exception caught
     }
 }
 

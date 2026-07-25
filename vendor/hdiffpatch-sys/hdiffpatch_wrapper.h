@@ -15,6 +15,14 @@ int hdiffpatch_create(
     int use_compression
 );
 
+int hdiffpatch_create_file(
+    const char* old_file,
+    const char* new_file,
+    const char* patch_file,
+    int thread_num,
+    int use_compression
+);
+
 int hdiffpatch_apply(
     const unsigned char* old_data, size_t old_size,
     const unsigned char* patch_data, size_t patch_size,
