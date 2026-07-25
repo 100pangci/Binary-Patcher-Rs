@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(name = "binary_patcher")]
@@ -19,14 +19,24 @@ pub struct Cli {
     pub no_compress: bool,
 
     #[arg(
-        long = "stream",
-        default_value_t = false,
-        help = "强制使用流式模式创建补丁（降低内存占用，但补丁体积可能更大）"
+        long = "mode",
+        default_value = "auto",
+        help = "补丁创建模式: auto（自动判断）、stream（流式低内存）、memory（全加载到内存，补丁更小）"
     )]
-    pub force_stream: bool,
+    pub patch_mode: PatchMode,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
+}
+
+#[derive(Clone, ValueEnum)]
+pub enum PatchMode {
+    /// 自动判断：内存够用全加载，不够用流式
+    Auto,
+    /// 强制流式模式：低内存占用，补丁体积可能更大
+    Stream,
+    /// 强制内存模式：全部文件加载到内存，补丁最优
+    Memory,
 }
 
 #[derive(Subcommand)]

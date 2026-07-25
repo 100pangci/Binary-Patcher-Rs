@@ -124,7 +124,7 @@ binary_patcher
 | `apply <旧文件> <补丁文件> <输出文件>` | 应用单个补丁 |
 | `bundle --base-dir <路径>` | 指定工作目录执行打包 |
 | `--no-compress` | 禁用补丁压缩（默认启用 zlib 压缩） |
-| `--stream` | 强制使用流式模式创建补丁（降低内存占用，补丁体积可能更大） |
+| `--mode auto/stream/memory` | 补丁创建模式：`auto` 自动选择（默认）、`stream` 流式低内存、`memory` 全加载最优 |
 
 ### `apply_patch`
 
