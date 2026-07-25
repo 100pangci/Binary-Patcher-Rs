@@ -13,6 +13,7 @@
 - **整目录打包** — 对比 `Old/` 与 `New/`，自动生成 `manifest.json` + 补丁文件 + 新增文件
 - **一键应用** — `apply_patch` 读取清单、校验 SHA256、备份原文件、执行补丁
 - **一键回滚** — `rollback_patch` 恢复备份、删除新增文件
+- **低内存流式** — `--stream` 强制流式模式，降低内存占用，适合大文件或内存受限环境
 - **安全保障**：
   - 路径穿越防护（拒绝 `../` 逃逸）
   - 补丁前后 SHA256 校验
@@ -227,7 +228,7 @@ cargo build --release
 | 语言 | Rust（edition 2024） |
 | CLI 框架 | clap（derive 模式） |
 | 序列化 | serde + serde_json |
-| 哈希 | SHA-256（sha2 crate） |
+| 哈希 | SHA-256（ring crate，汇编优化） |
 | 目录遍历 | walkdir |
 | 时间处理 | chrono |
 | 终端检测 | atty |
