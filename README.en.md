@@ -13,7 +13,8 @@ Powered by [HDiffPatch](https://github.com/sisong/HDiffPatch) via FFI static lin
 - **Directory bundle** — compare `Old/` vs `New/`, auto-generate `manifest.json` + patches + new files
 - **One-click apply** — `apply_patch` reads the manifest, verifies SHA256, backs up originals, applies patches
 - **One-click rollback** — `rollback_patch` restores backups and removes added files
-- **Low-memory streaming** — `--stream` forces file-stream mode for diff creation, reducing memory usage for large files
+- **Adaptive memory/streaming** — `--mode auto` tries in-memory first, auto-falls back to streaming per file on OOM
+- **Low-memory streaming** — `--mode stream` forces file-stream mode for diff creation, reducing memory for large files
 - **Safety guarantees**:
   - Path traversal protection (`../` blocked)
   - SHA256 verification before and after patching
@@ -125,7 +126,7 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 | `apply <old> <patch> <output>` | Apply a single patch file |
 | `bundle --base-dir <path>` | Build a bundle using a specific workspace directory |
 | `--no-compress` | Disable patch compression (default: zlib compression enabled) |
-| `--stream` | Force streaming mode for diff creation (lower memory, potential larger patch) |
+| `--mode auto/stream/memory` | Diff mode: `auto` automatic (default), `stream` low-memory streaming, `memory` all-in-memory best quality |
 
 ### `apply_patch`
 
