@@ -322,7 +322,7 @@ fn test_full_workflow() {
     build_workspace(&base_dir);
 
     // Generate bundle (with compression)
-    binary_patcher::bundle::build_patch_bundle(&base_dir, true).unwrap();
+    binary_patcher::bundle::build_patch_bundle(&base_dir, true, false).unwrap();
 
     let patch_dir = base_dir.join("Patch");
     assert!(patch_dir.join("manifest.json").exists());
