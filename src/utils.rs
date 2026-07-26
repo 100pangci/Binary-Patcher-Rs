@@ -3,6 +3,14 @@ use std::io::Read;
 use ring::digest::{Context, SHA256};
 use walkdir::WalkDir;
 
+pub fn pause_if_needed() {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return;
+    }
+    println!("\n按 Enter 键退出...");
+    let _ = std::io::stdin().read_line(&mut String::new());
+}
+
 pub fn format_size(size_bytes: u64) -> String {
     if size_bytes < 1024 {
         format!("{size_bytes} B")
@@ -130,53 +138,78 @@ pub fn display_path(path: &Path, base_dir: &Path) -> String {
 
 pub const BACKUP_SUFFIX: &str = ".backup_before_patch";
 
-pub fn create_backup(target_path: &Path) -> anyhow::Result<PathBuf> {
+pub fn backup_root_dir(patch_dir: &Path) -> PathBuf {
+    patch_dir.join(".backup_before_patch")
+}
+
+pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<PathBuf> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("无效的文件路径: {}", target_path.display()))?;
 
+    let rel = target_path.parent()
+        .and_then(|p| p.strip_prefix(base_dir).ok())
+        .unwrap_or(Path::new(""));
+
+    let backup_dir = backup_root.join(rel);
+    ensure_parent_dir(&backup_dir.join(&file_name))?;
+
     let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
-    let mut backup_path = target_path.with_file_name(&backup_name);
+    let mut backup_path = backup_dir.join(&backup_name);
 
     if backup_path.exists() {
         let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
-        backup_path = target_path.with_file_name(format!("{file_name}{BACKUP_SUFFIX}{timestamp}"));
+        backup_path = backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}"));
     }
 
     std::fs::copy(target_path, &backup_path)?;
     Ok(backup_path)
 }
 
-pub fn restore_backup(target_path: &Path) -> anyhow::Result<bool> {
+pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<bool> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("无效的文件路径: {}", target_path.display()))?;
 
-    let parent = target_path.parent().unwrap_or(Path::new("."));
     let backup_prefix = format!("{file_name}{BACKUP_SUFFIX}");
 
-    // Find newest matching backup (handles both plain and timestamped names)
-    let backup_path = std::fs::read_dir(parent)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(&backup_prefix))
-        })
-        .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok());
+    let find_newest = |dir: &Path| -> Option<PathBuf> {
+        std::fs::read_dir(dir).ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&backup_prefix))
+            })
+            .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+    };
 
-    match backup_path {
-        Some(path) => {
-            ensure_parent_dir(target_path)?;
-            std::fs::copy(&path, target_path)?;
-            std::fs::remove_file(&path)?;
-            Ok(true)
-        }
-        None => Ok(false),
+    let do_restore = |backup_path: &Path| -> anyhow::Result<bool> {
+        ensure_parent_dir(target_path)?;
+        std::fs::copy(backup_path, target_path)?;
+        std::fs::remove_file(backup_path)?;
+        Ok(true)
+    };
+
+    // Try new backup location first
+    let rel = target_path.parent()
+        .and_then(|p| p.strip_prefix(base_dir).ok())
+        .unwrap_or(Path::new(""));
+    let backup_dir = backup_root.join(rel);
+    if let Some(path) = find_newest(&backup_dir) {
+        return do_restore(&path);
     }
+
+    // Fall back to old-style in-place backup (backwards compatibility)
+    let parent = target_path.parent().unwrap_or(Path::new("."));
+    if let Some(path) = find_newest(parent) {
+        return do_restore(&path);
+    }
+
+    Ok(false)
 }
 
 pub fn copy_file(src: &Path, dst: &Path) -> anyhow::Result<()> {

@@ -206,7 +206,8 @@ fn get_latest_tag(cache_dir: &Path) -> String {
 
     let tag_name = tag_name.unwrap_or_else(|| {
         panic!(
-            "Failed to determine latest HDiffPatch version. "
+            "Failed to determine latest HDiffPatch version. \
+             Check your network connection or set GITHUB_TOKEN environment variable."
         )
     });
 

@@ -28,6 +28,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     let mut changed_count = 0;
     let mut added_count = 0;
     let mut deleted_count = 0;
+    let mut deleted_dirs_count = 0;
 
     println!("开始扫描 Old / New 并计算 SHA256...");
 
@@ -139,7 +140,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
         if !new_dirs.contains_key(rel_path) {
             manifest.deleted_dirs.push(rel_path.clone());
             println!("[删除目录] {rel_path}");
-            deleted_count += 1;
+            deleted_dirs_count += 1;
         }
     }
     // Sort deepest-first for deletion order at apply time
@@ -152,6 +153,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     println!("- 变更文件: {changed_count}");
     println!("- 新增文件: {added_count}");
     println!("- 删除文件: {deleted_count}");
+    println!("- 删除目录: {deleted_dirs_count}");
     println!("- 输出目录: {}", patch_dir.display());
 
     Ok(())

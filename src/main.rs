@@ -4,7 +4,7 @@ use binary_patcher::cli::{Cli, Commands};
 use binary_patcher::bundle::{self, init_workspace};
 use binary_patcher::apply;
 use binary_patcher::hdiffpatch;
-use binary_patcher::utils::{format_size, ensure_parent_dir};
+use binary_patcher::utils::{format_size, ensure_parent_dir, pause_if_needed};
 
 fn create_single_patch(old_file: &str, new_file: &str, patch_file: &str, use_compression: bool) -> anyhow::Result<()> {
     let old_path = Path::new(old_file);
@@ -48,7 +48,7 @@ fn main() {
         }
         None => {
             // No-arg workspace mode
-            let base_dir = std::env::current_dir().unwrap_or_default();
+            let base_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             match init_workspace(&base_dir) {
                 Ok(true) => bundle::build_patch_bundle(&base_dir, use_compression, cli.patch_mode.clone(), cli.patch_format.clone()),
                 Ok(false) => {
@@ -67,12 +67,4 @@ fn main() {
     }
 
     pause_if_needed();
-}
-
-fn pause_if_needed() {
-    if !atty::is(atty::Stream::Stdin) {
-        return;
-    }
-    println!("\n按 Enter 键退出...");
-    let _ = std::io::stdin().read_line(&mut String::new());
 }

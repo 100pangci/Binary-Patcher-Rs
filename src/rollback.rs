@@ -1,36 +1,6 @@
 use std::path::Path;
-use walkdir::WalkDir;
 use crate::manifest::Manifest;
-use crate::utils::{resolve_safe_path, restore_backup, display_path, ensure_parent_dir, BACKUP_SUFFIX};
-
-fn restore_from_staging(target_path: &Path, patch_dir: &Path) -> anyhow::Result<bool> {
-    let staging_dir = patch_dir.join(".backup_staging");
-    if !staging_dir.exists() {
-        return Ok(false);
-    }
-
-    let file_name = target_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("无效的文件路径: {}", target_path.display()))?;
-
-    let backup_prefix = format!("{file_name}{BACKUP_SUFFIX}");
-
-    // Search staging dir recursively for matching backup file
-    for entry in WalkDir::new(&staging_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            let fname = entry.file_name().to_string_lossy();
-            if fname == backup_prefix || fname.starts_with(&format!("{backup_prefix}.")) {
-                ensure_parent_dir(target_path)?;
-                std::fs::copy(entry.path(), target_path)?;
-                std::fs::remove_file(entry.path())?;
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
+use crate::utils::{resolve_safe_path, restore_backup, display_path, backup_root_dir};
 
 fn cleanup_empty_dirs(start: &Path, base_dir: &Path) -> anyhow::Result<()> {
     let base_abs = std::path::absolute(base_dir)?;
@@ -70,6 +40,7 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     }
 
     let manifest = Manifest::load(&patch_dir)?;
+    let backup_root = backup_root_dir(&patch_dir);
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -94,7 +65,7 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     for item in changed {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         println!("[恢复变更] {}", item.path);
-        if restore_backup(&target_path)? {
+        if restore_backup(&target_path, base_dir, &backup_root)? {
             restored_count += 1;
         } else {
             println!("  跳过：未找到备份文件");
@@ -104,11 +75,8 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     for item in deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         println!("[恢复删除] {}", item.path);
-        if restore_backup(&target_path)? {
+        if restore_backup(&target_path, base_dir, &backup_root)? {
             restored_count += 1;
-        } else if restore_from_staging(&target_path, &patch_dir)? {
-            restored_count += 1;
-            println!("  已从备份暂存区恢复");
         } else {
             println!("  跳过：未找到备份文件");
         }
@@ -137,7 +105,18 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     println!("\n补丁回滚完成！");
     println!("- 恢复备份文件: {restored_count}");
     println!("- 删除新增文件: {removed_count}");
-    println!("说明：已恢复的 *.backup_before_patch 备份文件会被自动删除。");
+
+    // Clean up backup directory
+    if backup_root.exists() {
+        std::fs::remove_dir_all(&backup_root)?;
+        println!("已清理备份目录。");
+    }
+
+    // Clean up legacy .backup_staging if it exists
+    let staging_dir = patch_dir.join(".backup_staging");
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir)?;
+    }
 
     Ok(())
 }

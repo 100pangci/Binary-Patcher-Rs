@@ -1,5 +1,6 @@
 use std::path::Path;
 use binary_patcher::apply;
+use binary_patcher::utils::pause_if_needed;
 
 fn main() {
     let result = apply::apply_bundle(&Path::new("."));
@@ -11,12 +12,4 @@ fn main() {
     }
 
     pause_if_needed();
-}
-
-fn pause_if_needed() {
-    if !atty::is(atty::Stream::Stdin) {
-        return;
-    }
-    println!("\n按 Enter 键退出...");
-    let _ = std::io::stdin().read_line(&mut String::new());
 }

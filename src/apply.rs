@@ -1,7 +1,7 @@
 use std::path::Path;
 use crate::hdiffpatch::run_hpatchz;
 use crate::manifest::Manifest;
-use crate::utils::{sha256_of_file, ensure_parent_dir, create_backup, resolve_safe_path, copy_file};
+use crate::utils::{sha256_of_file, ensure_parent_dir, create_backup, restore_backup, resolve_safe_path, copy_file, backup_root_dir};
 
 pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
@@ -15,6 +15,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     }
 
     let manifest = Manifest::load(&patch_dir)?;
+    let backup_root = backup_root_dir(&patch_dir);
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -40,7 +41,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
             );
         }
 
-        let backup_path = create_backup(&target_path)?;
+        let backup_path = create_backup(&target_path, base_dir, &backup_root)?;
         let backup_name = backup_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -52,7 +53,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
         let new_hash = sha256_of_file(&target_path)?;
         if new_hash != item.new_sha256 {
-            std::fs::copy(&backup_path, &target_path)?;
+            restore_backup(&target_path, base_dir, &backup_root)?;
             anyhow::bail!(
                 "错误: 补丁应用后校验失败: {}\n已自动恢复原始文件。",
                 item.path
@@ -75,7 +76,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     for item in deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         if target_path.exists() {
-            let backup_path = create_backup(&target_path)?;
+            let backup_path = create_backup(&target_path, base_dir, &backup_root)?;
             let backup_name = backup_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -83,27 +84,6 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
             println!("[删除] {}", item.path);
             println!("  已备份到: {backup_name}");
             std::fs::remove_file(&target_path)?;
-        }
-    }
-
-    // Move backup files from directories that will be deleted into Patch/.backup_staging/
-    // so those directories can be safely removed while preserving rollback capability
-    let backup_staging = patch_dir.join(".backup_staging");
-    for dir_path in &manifest.deleted_dirs {
-        let target_dir = resolve_safe_path(base_dir, dir_path)?;
-        if target_dir.exists() && target_dir.is_dir() {
-            for entry in walkdir::WalkDir::new(&target_dir).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    let fname = entry.file_name().to_string_lossy();
-                    if fname.contains(".backup_before_patch") {
-                        let rel = entry.path().strip_prefix(&target_dir)
-                            .expect("entry should be under target_dir");
-                        let staging_path = backup_staging.join(dir_path).join(rel);
-                        std::fs::create_dir_all(staging_path.parent().unwrap())?;
-                        std::fs::rename(entry.path(), &staging_path)?;
-                    }
-                }
-            }
         }
     }
 

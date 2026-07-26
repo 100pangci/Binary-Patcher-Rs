@@ -299,9 +299,10 @@ fn test_manifest_wrong_format() {
 #[test]
 fn test_backup_created() {
     let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
     let target = dir.path().join("original.txt");
     std::fs::write(&target, "content").unwrap();
-    let backup = binary_patcher::utils::create_backup(&target).unwrap();
+    let backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
     assert!(backup.exists());
     assert_eq!(std::fs::read_to_string(&backup).unwrap(), "content");
 }
@@ -309,28 +310,31 @@ fn test_backup_created() {
 #[test]
 fn test_backup_suffix() {
     let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "original").unwrap();
-    let backup = binary_patcher::utils::create_backup(&target).unwrap();
+    let backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
     assert!(backup.to_string_lossy().ends_with(".backup_before_patch"));
 }
 
 #[test]
 fn test_restore_backup() {
     let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "modified").unwrap();
-    let _backup = binary_patcher::utils::create_backup(&target).unwrap();
+    let _backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
     std::fs::write(&target, "new content").unwrap();
-    assert!(binary_patcher::utils::restore_backup(&target).unwrap());
+    assert!(binary_patcher::utils::restore_backup(&target, dir.path(), &backup_root).unwrap());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "modified");
 }
 
 #[test]
 fn test_restore_backup_no_backup() {
     let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
-    assert!(!binary_patcher::utils::restore_backup(&target).unwrap());
+    assert!(!binary_patcher::utils::restore_backup(&target, dir.path(), &backup_root).unwrap());
 }
 
 // ===========================================================================
