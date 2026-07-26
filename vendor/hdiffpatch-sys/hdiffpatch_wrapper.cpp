@@ -55,23 +55,34 @@ int hdiffpatch_create(
     const unsigned char* new_data, size_t new_size,
     unsigned char** out_patch, size_t* out_patch_size,
     int thread_num,
-    int use_compression)
+    int use_compression,
+    int fast_format)
 {
     try {
         std::vector<unsigned char> diff;
         const hdiff_TCompress* compress = nullptr;
-        if (use_compression) {
-            // zlibCompressPlugin has hdiff_TCompress as its first member; safe cast
+        if (use_compression)
             compress = (const hdiff_TCompress*)&zlibCompressPlugin;
+
+        if (fast_format) {
+            create_compressed_diff(
+                new_data, new_data + new_size,
+                old_data, old_data + old_size,
+                diff,
+                compress,
+                4, false,
+                (size_t)thread_num
+            );
+        } else {
+            create_single_compressed_diff(
+                new_data, new_data + new_size,
+                old_data, old_data + old_size,
+                diff,
+                compress,
+                1024 * 256, 4, false,
+                (size_t)thread_num
+            );
         }
-        create_single_compressed_diff(
-            new_data, new_data + new_size,
-            old_data, old_data + old_size,
-            diff,
-            compress,
-            1024 * 256, 4, false,
-            (size_t)thread_num
-        );
         *out_patch_size = diff.size();
         *out_patch = (unsigned char*)std::malloc(diff.size());
         if (!*out_patch) return -1;
@@ -87,7 +98,8 @@ int hdiffpatch_create_file(
     const char* new_file,
     const char* patch_file,
     int thread_num,
-    int use_compression)
+    int use_compression,
+    int fast_format)
 {
     hpatch_TFileStreamInput  oldStream;
     hpatch_TFileStreamInput  newStream;
@@ -131,15 +143,26 @@ int hdiffpatch_create_file(
         if      (oldSize > 500ULL << 20) kMatchBlockSize = 256; // 1.26GB*16/256≈79MB
         else if (oldSize > 100ULL << 20) kMatchBlockSize = 128;
 
-        create_single_compressed_diff_stream(
-            &newStream.base,
-            &oldStream.base,
-            &patchStream.base,
-            compress,
-            1024 * 256,
-            kMatchBlockSize,
-            &mtsets
-        );
+        if (fast_format) {
+            create_compressed_diff_stream(
+                &newStream.base,
+                &oldStream.base,
+                &patchStream.base,
+                compress,
+                kMatchBlockSize,
+                &mtsets
+            );
+        } else {
+            create_single_compressed_diff_stream(
+                &newStream.base,
+                &oldStream.base,
+                &patchStream.base,
+                compress,
+                1024 * 256,
+                kMatchBlockSize,
+                &mtsets
+            );
+        }
     } catch (...) {
         ret = -1;
     }

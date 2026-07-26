@@ -127,6 +127,7 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 | `bundle --base-dir <path>` | Build a bundle using a specific workspace directory |
 | `--no-compress` | Disable patch compression (default: zlib compression enabled) |
 | `--mode auto/stream/memory` | Diff mode: `auto` automatic (default), `stream` low-memory streaming, `memory` all-in-memory best quality |
+| `--format precise/fast` | Diff algorithm: `precise` suffix-string (smaller patch, default), `fast` hash-based (faster) |
 
 ### `apply_patch`
 

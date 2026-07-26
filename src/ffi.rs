@@ -12,6 +12,7 @@ unsafe extern "C" {
         out_patch_size: *mut usize,
         thread_num: i32,
         use_compression: i32,
+        fast_format: i32,
     ) -> i32;
 
     fn hdiffpatch_create_file(
@@ -20,6 +21,7 @@ unsafe extern "C" {
         patch_file: *const c_char,
         thread_num: i32,
         use_compression: i32,
+        fast_format: i32,
     ) -> i32;
 
     fn hdiffpatch_apply(
@@ -40,6 +42,7 @@ pub fn create_patch(
     new_data: &[u8],
     thread_num: u32,
     use_compression: bool,
+    fast_format: bool,
 ) -> Result<Vec<u8>, String> {
     let mut out_patch: *mut u8 = null_mut();
     let mut out_patch_size: usize = 0;
@@ -54,6 +57,7 @@ pub fn create_patch(
             &mut out_patch_size,
             thread_num as i32,
             use_compression as i32,
+            fast_format as i32,
         )
     };
 
@@ -79,6 +83,7 @@ pub fn create_patch_file(
     patch_file: &str,
     thread_num: u32,
     use_compression: bool,
+    fast_format: bool,
 ) -> Result<(), String> {
     let old_c = std::ffi::CString::new(old_file).map_err(|e| format!("无效路径: {e}"))?;
     let new_c = std::ffi::CString::new(new_file).map_err(|e| format!("无效路径: {e}"))?;
@@ -91,6 +96,7 @@ pub fn create_patch_file(
             patch_c.as_ptr(),
             thread_num as i32,
             use_compression as i32,
+            fast_format as i32,
         )
     };
 

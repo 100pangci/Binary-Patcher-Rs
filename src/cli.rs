@@ -25,6 +25,13 @@ pub struct Cli {
     )]
     pub patch_mode: PatchMode,
 
+    #[arg(
+        long = "format",
+        default_value = "precise",
+        help = "差分算法: precise（suffix-string，补丁更小，默认）、fast（hash匹配，速度更快）"
+    )]
+    pub patch_format: PatchFormat,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -37,6 +44,14 @@ pub enum PatchMode {
     Stream,
     /// 强制内存模式：全部文件加载到内存，补丁最优
     Memory,
+}
+
+#[derive(Clone, ValueEnum)]
+pub enum PatchFormat {
+    /// 快速模式：hash 匹配，速度快，补丁体积较大
+    Fast,
+    /// 精确模式：suffix-string 匹配，补丁更小（默认）
+    Precise,
 }
 
 #[derive(Subcommand)]

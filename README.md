@@ -125,6 +125,7 @@ binary_patcher
 | `bundle --base-dir <路径>` | 指定工作目录执行打包 |
 | `--no-compress` | 禁用补丁压缩（默认启用 zlib 压缩） |
 | `--mode auto/stream/memory` | 补丁创建模式：`auto` 自动选择（默认）、`stream` 流式低内存、`memory` 全加载最优 |
+| `--format precise/fast` | 差分算法：`precise` suffix-string（补丁更小，默认）、`fast` hash（速度更快） |
 
 ### `apply_patch`
 

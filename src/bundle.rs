@@ -1,10 +1,11 @@
 use crate::cli::PatchMode;
+use crate::cli::PatchFormat;
 use crate::hdiffpatch::{get_recommended_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{Manifest, ChangedEntry, AddedEntry, DeletedEntry, INSTRUCTIONS_NAME};
 use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, ensure_parent_dir};
 use std::path::Path;
 
-pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMode) -> anyhow::Result<()> {
+pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMode, format: PatchFormat) -> anyhow::Result<()> {
     let old_dir = base_dir.join("Old");
     let new_dir = base_dir.join("New");
     let patch_dir = base_dir.join("Patch");
@@ -16,6 +17,8 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
 
     let old_files = relative_file_map(&old_dir);
     let new_files = relative_file_map(&new_dir);
+
+    let fast_format = matches!(format, PatchFormat::Fast);
 
     let mut all_paths: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
     for k in old_files.keys() { all_paths.insert(k); }
@@ -43,7 +46,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                         new_hash = sha256_of_file(new)?;
                         if old_hash == new_hash { continue; }
                         println!("[变更] {relative_path}");
-                        create_patch_stream(old, new, &patch_output, use_compression)?;
+                        create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
                     }
                     PatchMode::Memory => {
                         let old_data = std::fs::read(old)
@@ -54,7 +57,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                         new_hash = sha256_of_bytes(&new_data);
                         if old_hash == new_hash { continue; }
                         println!("[变更] {relative_path}");
-                        create_patch_mem(&old_data, &new_data, &patch_output, use_compression)?;
+                        create_patch_mem(&old_data, &new_data, &patch_output, use_compression, fast_format)?;
                     }
                     PatchMode::Auto => {
                         // Try memory first (best patch quality + single file read)
@@ -74,7 +77,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                                 old_hash = oh;
                                 new_hash = nh;
                                 println!("[变更] {relative_path}");
-                                create_patch_mem(&old_data, &new_data, &patch_output, use_compression)?;
+                                create_patch_mem(&old_data, &new_data, &patch_output, use_compression, fast_format)?;
                             }
                             Err(e) => {
                                 let msg = e.to_string();
@@ -87,7 +90,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                                     new_hash = sha256_of_file(new)?;
                                     if old_hash == new_hash { continue; }
                                     println!("[变更] {relative_path}");
-                                    create_patch_stream(old, new, &patch_output, use_compression)?;
+                        create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
                                 } else {
                                     return Err(e);
                                 }
@@ -141,13 +144,13 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     Ok(())
 }
 
-fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_compression: bool) -> anyhow::Result<()> {
+fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_compression: bool, fast_format: bool) -> anyhow::Result<()> {
     ensure_parent_dir(patch_file)?;
     let old_size = old_data.len();
     let new_size = new_data.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_recommended_thread_count(), use_compression)?;
+    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_recommended_thread_count(), use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));
@@ -161,13 +164,13 @@ fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_com
     Ok(())
 }
 
-fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_compression: bool) -> anyhow::Result<()> {
+fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_compression: bool, fast_format: bool) -> anyhow::Result<()> {
     ensure_parent_dir(patch_file)?;
     let old_size = std::fs::metadata(old_file)?.len();
     let new_size = std::fs::metadata(new_file)?.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_recommended_thread_count(), use_compression)?;
+    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_recommended_thread_count(), use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));

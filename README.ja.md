@@ -127,6 +127,7 @@ binary_patcher
 | `bundle --base-dir <パス>` | 指定したワークスペースディレクトリでバンドルを生成 |
 | `--no-compress` | パッチ圧縮を無効化（デフォルト：zlib圧縮有効） |
 | `--mode auto/stream/memory` | 差分モード：`auto` 自動選択（デフォルト）、`stream` 低メモリストリーミング、`memory` 全メモリ高品質 |
+| `--format precise/fast` | 差分アルゴリズム：`precise` suffix-string（パッチ小、デフォルト）、`fast` hash（高速） |
 
 ### `apply_patch`
 

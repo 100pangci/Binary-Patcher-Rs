@@ -44,13 +44,13 @@ fn main() {
             apply::apply_single_patch(&old_file, &patch_file, &output_file)
         }
         Some(Commands::Bundle { base_dir }) => {
-            bundle::build_patch_bundle(Path::new(&base_dir), use_compression, cli.patch_mode.clone())
+            bundle::build_patch_bundle(Path::new(&base_dir), use_compression, cli.patch_mode.clone(), cli.patch_format.clone())
         }
         None => {
             // No-arg workspace mode
             let base_dir = std::env::current_dir().unwrap_or_default();
             match init_workspace(&base_dir) {
-                Ok(true) => bundle::build_patch_bundle(&base_dir, use_compression, cli.patch_mode.clone()),
+                Ok(true) => bundle::build_patch_bundle(&base_dir, use_compression, cli.patch_mode.clone(), cli.patch_format.clone()),
                 Ok(false) => {
                     pause_if_needed();
                     return;
