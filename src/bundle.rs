@@ -1,6 +1,6 @@
 use crate::cli::PatchMode;
 use crate::cli::PatchFormat;
-use crate::hdiffpatch::{get_recommended_thread_count, run_hdiffz_mem, run_hdiffz_stream};
+use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{Manifest, ChangedEntry, AddedEntry, DeletedEntry, INSTRUCTIONS_NAME};
 use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, ensure_parent_dir};
 use std::path::Path;
@@ -150,7 +150,7 @@ fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_com
     let new_size = new_data.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_recommended_thread_count(), use_compression, fast_format)?;
+    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_diff_thread_count(), use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));
@@ -170,7 +170,7 @@ fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_
     let new_size = std::fs::metadata(new_file)?.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_recommended_thread_count(), use_compression, fast_format)?;
+    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_diff_thread_count(), use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));

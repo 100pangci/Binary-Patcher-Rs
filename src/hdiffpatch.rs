@@ -2,13 +2,21 @@ use std::path::Path;
 use crate::ffi;
 
 const DEFAULT_THREADS: u32 = 4;
-const MAX_PATCH_THREADS: u32 = 5; // HDiffPatch -p- supports 1..5
+const MAX_PATCH_THREADS: u32 = 5;     // hpatchz -p- limit (apply)
+const MAX_DIFF_THREADS: u32 = 32;     // hdiffz -p- can be much higher (create)
 
 pub fn get_recommended_thread_count() -> u32 {
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(DEFAULT_THREADS as usize);
     (cpu_count.saturating_sub(1)).max(1).min(MAX_PATCH_THREADS as usize) as u32
+}
+
+pub fn get_diff_thread_count() -> u32 {
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(DEFAULT_THREADS as usize);
+    (cpu_count.saturating_sub(1)).max(1).min(MAX_DIFF_THREADS as usize) as u32
 }
 
 /// In-memory patch creation (best quality, suffix-string matching).
@@ -60,7 +68,7 @@ pub fn run_hdiffz(
     patch_file: &Path,
     use_compression: bool,
 ) -> anyhow::Result<u32> {
-    let thread_count = get_recommended_thread_count();
+    let thread_count = get_diff_thread_count();
 
     crate::utils::ensure_parent_dir(patch_file)?;
 

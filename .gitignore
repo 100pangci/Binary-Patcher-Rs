@@ -6,3 +6,4 @@
 test_workspace/
 tmp_test/tmp_bench.ps1
 tmp_test/
+*.obj
