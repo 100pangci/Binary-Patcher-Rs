@@ -35,6 +35,8 @@ pub struct Manifest {
     pub changed: Vec<ChangedEntry>,
     pub added: Vec<AddedEntry>,
     pub deleted: Vec<DeletedEntry>,
+    #[serde(default)]
+    pub deleted_dirs: Vec<String>,
 }
 
 impl Manifest {
@@ -46,6 +48,7 @@ impl Manifest {
             changed: Vec::new(),
             added: Vec::new(),
             deleted: Vec::new(),
+            deleted_dirs: Vec::new(),
         }
     }
 
@@ -87,6 +90,12 @@ impl Manifest {
             }
             if item.old_sha256.is_empty() {
                 anyhow::bail!("manifest deleted[{idx}] 缺少字段 'old_sha256'");
+            }
+        }
+
+        for (idx, item) in self.deleted_dirs.iter().enumerate() {
+            if item.is_empty() {
+                anyhow::bail!("manifest deleted_dirs[{idx}] 路径为空");
             }
         }
 

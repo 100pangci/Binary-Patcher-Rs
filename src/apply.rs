@@ -86,6 +86,36 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
+    // Move backup files from directories that will be deleted into Patch/.backup_staging/
+    // so those directories can be safely removed while preserving rollback capability
+    let backup_staging = patch_dir.join(".backup_staging");
+    for dir_path in &manifest.deleted_dirs {
+        let target_dir = resolve_safe_path(base_dir, dir_path)?;
+        if target_dir.exists() && target_dir.is_dir() {
+            for entry in walkdir::WalkDir::new(&target_dir).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    let fname = entry.file_name().to_string_lossy();
+                    if fname.contains(".backup_before_patch") {
+                        let rel = entry.path().strip_prefix(&target_dir)
+                            .expect("entry should be under target_dir");
+                        let staging_path = backup_staging.join(dir_path).join(rel);
+                        std::fs::create_dir_all(staging_path.parent().unwrap())?;
+                        std::fs::rename(entry.path(), &staging_path)?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove directories that exist in Old but not in New (already sorted deepest-first)
+    for dir_path in &manifest.deleted_dirs {
+        let target_dir = resolve_safe_path(base_dir, dir_path)?;
+        if target_dir.exists() && target_dir.is_dir() {
+            std::fs::remove_dir(&target_dir)?;
+            println!("[删除目录] {dir_path}");
+        }
+    }
+
     println!("\n整包补丁应用完成！");
     println!("如果需要回滚，请使用同目录下的 rollback_patch 恢复。");
 

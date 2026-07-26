@@ -2,7 +2,7 @@ use crate::cli::PatchMode;
 use crate::cli::PatchFormat;
 use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{Manifest, ChangedEntry, AddedEntry, DeletedEntry, INSTRUCTIONS_NAME};
-use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, ensure_parent_dir};
+use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, relative_dir_map, ensure_parent_dir};
 use std::path::Path;
 
 pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMode, format: PatchFormat) -> anyhow::Result<()> {
@@ -131,6 +131,19 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
             (None, None) => unreachable!(),
         }
     }
+
+    // Scan for directories that exist in Old but not in New
+    let old_dirs = relative_dir_map(&old_dir);
+    let new_dirs = relative_dir_map(&new_dir);
+    for (rel_path, _) in &old_dirs {
+        if !new_dirs.contains_key(rel_path) {
+            manifest.deleted_dirs.push(rel_path.clone());
+            println!("[删除目录] {rel_path}");
+            deleted_count += 1;
+        }
+    }
+    // Sort deepest-first for deletion order at apply time
+    manifest.deleted_dirs.sort_by(|a, b| b.len().cmp(&a.len()).then(b.cmp(a)));
 
     manifest.save(&patch_dir)?;
     write_patch_instructions(&patch_dir)?;

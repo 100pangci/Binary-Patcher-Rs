@@ -68,6 +68,22 @@ pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
         })
 }
 
+pub fn relative_dir_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
+    let mut dirs = std::collections::BTreeMap::new();
+    let base = base_dir.to_path_buf();
+    for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_dir() {
+            if let Ok(rel) = entry.path().strip_prefix(&base) {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if !rel_str.is_empty() {
+                    dirs.insert(rel_str, entry.path().to_path_buf());
+                }
+            }
+        }
+    }
+    dirs
+}
+
 pub fn relative_file_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
     let mut files = std::collections::BTreeMap::new();
     for path in iter_files(base_dir) {

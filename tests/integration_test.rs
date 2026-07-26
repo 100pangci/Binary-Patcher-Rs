@@ -221,6 +221,33 @@ fn test_empty_directory() {
     assert!(files.is_empty());
 }
 
+#[test]
+fn test_relative_dir_map() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("dir1/sub")).unwrap();
+    std::fs::write(dir.path().join("dir1/sub/a.txt"), "a").unwrap();
+    std::fs::create_dir_all(dir.path().join("dir2")).unwrap();
+    std::fs::write(dir.path().join("dir2/b.txt"), "b").unwrap();
+
+    let mapping = binary_patcher::utils::relative_dir_map(dir.path());
+    assert!(mapping.contains_key("dir1"));
+    assert!(mapping.contains_key("dir1/sub"));
+    assert!(mapping.contains_key("dir2"));
+    assert_eq!(mapping.len(), 3);
+}
+
+#[test]
+fn test_relative_dir_map_with_empty_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("empty_dir")).unwrap();
+    std::fs::create_dir_all(dir.path().join("parent/child")).unwrap();
+
+    let mapping = binary_patcher::utils::relative_dir_map(dir.path());
+    assert!(mapping.contains_key("empty_dir"));
+    assert!(mapping.contains_key("parent"));
+    assert!(mapping.contains_key("parent/child"));
+}
+
 // ===========================================================================
 // Manifest validation
 // ===========================================================================
@@ -246,6 +273,7 @@ fn test_valid_manifest() {
             path: "c.txt".to_string(),
             old_sha256: "d".repeat(64),
         }],
+        deleted_dirs: vec!["old_dir".to_string(), "deep/nested".to_string()],
     };
     assert!(manifest.validate().is_ok());
 }
@@ -259,6 +287,7 @@ fn test_manifest_wrong_format() {
         changed: vec![],
         added: vec![],
         deleted: vec![],
+        deleted_dirs: vec![],
     };
     assert!(manifest.validate().is_err());
 }
@@ -351,6 +380,10 @@ fn test_full_workflow() {
 
     assert_eq!(new_files, game_files);
 
+    // Verify directories from Old that were deleted are gone
+    assert!(!game_dir.join("deep").exists(), "directory deep/ should have been removed");
+    assert!(!game_dir.join("deep/nested").exists(), "directory deep/nested/ should have been removed");
+
     // Rollback
     binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
 
@@ -362,6 +395,11 @@ fn test_full_workflow() {
         .collect();
 
     assert_eq!(old_files, game_files_after);
+
+    // Verify deleted directories are recreated after rollback
+    assert!(game_dir.join("deep").is_dir(), "directory deep/ should be recreated after rollback");
+    assert!(game_dir.join("deep/nested").is_dir(), "directory deep/nested/ should be recreated after rollback");
+    assert!(game_dir.join("deep/nested/old_cache.tmp").exists(), "file deep/nested/old_cache.tmp should be restored after rollback");
 
     // Restore working directory
     std::env::set_current_dir(&orig_dir).unwrap();
