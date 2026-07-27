@@ -39,12 +39,6 @@ pub struct Manifest {
     pub deleted_dirs: Vec<String>,
 }
 
-impl Manifest {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 fn is_valid_sha256(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }

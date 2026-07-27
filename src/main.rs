@@ -52,7 +52,7 @@ fn main() {
             let base_dir = match std::env::current_dir() {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("警告: 无法获取当前目录 ({e})，回退至当前工作目录");
+                    eprintln!("警告: 无法获取当前目录 ({e})，使用 '.' 作为工作目录");
                     std::path::PathBuf::from(".")
                 }
             };

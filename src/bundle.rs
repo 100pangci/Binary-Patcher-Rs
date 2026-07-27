@@ -25,7 +25,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     for k in old_files.keys() { all_paths.insert(k); }
     for k in new_files.keys() { all_paths.insert(k); }
 
-    let mut manifest = Manifest::new();
+    let mut manifest = Manifest::default();
     let mut changed_count = 0;
     let mut added_count = 0;
     let mut deleted_count = 0;
@@ -73,19 +73,33 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                         });
                     }
                     PatchMode::Auto => {
-                        let (old_hash, new_hash) = match try_mem_patch(old, new, &patch_output, use_compression, fast_format) {
-                            Ok((oh, nh)) => {
-                                if oh == nh {
-                                    let _ = std::fs::remove_file(&patch_output);
-                                    continue;
+                        // 先读取文件到内存并计算哈希，相同则跳过（避免不必要的 diff）
+                        let (old_hash, new_hash) = match try_read_old_new(old, new) {
+                            Ok((od, nd)) => {
+                                let oh = sha256_of_bytes(&od);
+                                let nh = sha256_of_bytes(&nd);
+                                if oh == nh { continue; }
+                                println!("[变更] {relative_path}");
+                                match run_hdiffz_mem(&od, &nd, &patch_output, get_diff_thread_count(), use_compression, fast_format) {
+                                    Ok(_) => {
+                                        let patch_size = std::fs::metadata(&patch_output)?.len();
+                                        println!("  补丁创建成功！");
+                                        println!("    - 旧文件大小: {}", format_size(od.len() as u64));
+                                        println!("    - 新文件大小: {}", format_size(nd.len() as u64));
+                                        println!("    - 补丁文件大小: {}", format_size(patch_size));
+                                    }
+                                    Err(e) if e.is_oom() => {
+                                        let total_gb = (od.len() + nd.len()) as f64 / (1u64 << 30) as f64;
+                                        eprintln!("注意: 内存不足（{:.1}GB），自动切换为流式模式", total_gb);
+                                        create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
+                                    }
+                                    Err(e) => {
+                                        return Err(anyhow::anyhow!("创建补丁失败 ({relative_path}): {e}"));
+                                    }
                                 }
                                 (oh, nh)
                             }
                             Err(e) if e.is_oom() => {
-                                let old_sz = std::fs::metadata(old).map(|m| m.len()).unwrap_or(0);
-                                let new_sz = std::fs::metadata(new).map(|m| m.len()).unwrap_or(0);
-                                let total_gb = (old_sz + new_sz) as f64 / (1u64 << 30) as f64;
-                                eprintln!("注意: 内存不足（{:.1}GB），自动切换为流式模式", total_gb);
                                 let oh = sha256_of_file(old)?;
                                 let nh = sha256_of_file(new)?;
                                 if oh == nh { continue; }
@@ -94,7 +108,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                                 (oh, nh)
                             }
                             Err(e) => {
-                                return Err(anyhow::anyhow!("创建补丁失败 ({relative_path}): {e}"));
+                                return Err(anyhow::anyhow!("处理文件失败 ({relative_path}): {e}"));
                             }
                         };
                         manifest.changed.push(ChangedEntry {
@@ -157,38 +171,6 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     Ok(())
 }
 
-fn try_mem_patch(
-    old: &Path,
-    new: &Path,
-    patch_output: &Path,
-    use_compression: bool,
-    fast_format: bool,
-) -> Result<(String, String), crate::ffi::PatchError> {
-    let old_data = std::fs::read(old)
-        .map_err(|e| crate::ffi::PatchError {
-            code: -1,
-            message: format!("读取旧文件失败 {}: {e}", old.display()),
-        })?;
-    let new_data = std::fs::read(new)
-        .map_err(|e| crate::ffi::PatchError {
-            code: -1,
-            message: format!("读取新文件失败 {}: {e}", new.display()),
-        })?;
-    let old_hash = sha256_of_bytes(&old_data);
-    let new_hash = sha256_of_bytes(&new_data);
-    run_hdiffz_mem(&old_data, &new_data, patch_output, get_diff_thread_count(), use_compression, fast_format)?;
-
-    let patch_size = std::fs::metadata(patch_output)
-        .map_err(|e| crate::ffi::PatchError { code: -1, message: format!("无法读取补丁文件: {e}") })?
-        .len();
-    println!("  补丁创建成功！");
-    println!("    - 旧文件大小: {}", format_size(old_data.len() as u64));
-    println!("    - 新文件大小: {}", format_size(new_data.len() as u64));
-    println!("    - 补丁文件大小: {}", format_size(patch_size));
-
-    Ok((old_hash, new_hash))
-}
-
 fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_compression: bool, fast_format: bool) -> anyhow::Result<()> {
     ensure_parent_dir(patch_file)?;
     let old_size = old_data.len();
@@ -229,6 +211,20 @@ fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_
     println!("  {}", "-".repeat(30));
 
     Ok(())
+}
+
+fn try_read_old_new(old: &Path, new: &Path) -> Result<(Vec<u8>, Vec<u8>), crate::ffi::PatchError> {
+    let old_data = std::fs::read(old)
+        .map_err(|e| crate::ffi::PatchError {
+            code: -1,
+            message: format!("读取旧文件失败 {}: {e}", old.display()),
+        })?;
+    let new_data = std::fs::read(new)
+        .map_err(|e| crate::ffi::PatchError {
+            code: -1,
+            message: format!("读取新文件失败 {}: {e}", new.display()),
+        })?;
+    Ok((old_data, new_data))
 }
 
 fn write_patch_instructions(patch_dir: &Path) -> anyhow::Result<()> {

@@ -101,6 +101,21 @@ pub fn run_hdiffz(
     }
 }
 
+pub fn apply_patch_with_retry(
+    old_data: &[u8],
+    patch_data: &[u8],
+    thread_count: u32,
+) -> Result<Vec<u8>, ffi::PatchError> {
+    match ffi::apply_patch(old_data, patch_data, thread_count) {
+        Ok(data) => Ok(data),
+        Err(e) if thread_count > 1 => {
+            eprintln!("注意: 多线程应用补丁失败，回退单线程重试 ({e})");
+            ffi::apply_patch(old_data, patch_data, 1)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> anyhow::Result<()> {
     let thread_count = get_recommended_thread_count();
     crate::utils::ensure_parent_dir(output_file)?;
@@ -111,7 +126,7 @@ pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> an
     let try_apply = || -> Result<Vec<u8>, ffi::PatchError> {
         let old_data = std::fs::read(old_file)
             .map_err(|e| ffi::PatchError { code: -1, message: format!("读取旧文件失败 {}: {e}", old_file.display()) })?;
-        ffi::apply_patch(&old_data, &patch_data, thread_count)
+        apply_patch_with_retry(&old_data, &patch_data, thread_count)
     };
 
     match try_apply() {
@@ -130,17 +145,7 @@ pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> an
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         Err(e) => {
-            if thread_count > 1 {
-                eprintln!("注意: 多线程应用补丁失败，回退单线程重试 ({e})");
-                let old_data = std::fs::read(old_file)
-                    .map_err(|e2| anyhow::anyhow!("读取旧文件失败 {}: {e2}", old_file.display()))?;
-                let new_data = ffi::apply_patch(&old_data, &patch_data, 1)
-                    .map_err(|e2| anyhow::anyhow!("单线程重试也失败: {e2}"))?;
-                std::fs::write(output_file, &new_data)
-                    .map_err(|e2| anyhow::anyhow!("写入输出文件失败 {}: {e2}", output_file.display()))?;
-            } else {
-                return Err(anyhow::anyhow!("{e}"));
-            }
+            return Err(anyhow::anyhow!("{e}"));
         }
     }
 

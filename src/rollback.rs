@@ -118,9 +118,20 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
     // Clean up backup directory
     if backup_root.exists() {
-        println!("提示: 即将删除所有备份文件 ({})，确认无误后继续。", backup_root.display());
-        std::fs::remove_dir_all(&backup_root)?;
-        println!("已清理备份目录。");
+        print!(
+            "即将删除所有备份文件 ({}), 确认删除? [y/N]: ",
+            backup_root.display()
+        );
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().eq_ignore_ascii_case("y") {
+            std::fs::remove_dir_all(&backup_root)?;
+            println!("已清理备份目录。");
+        } else {
+            println!("已跳过清理备份文件。");
+        }
     }
 
     // Clean up legacy .backup_staging if it exists

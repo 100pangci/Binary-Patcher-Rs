@@ -103,7 +103,7 @@ fn main() {
     // Compile C files (not C++)
     let mut c_build = cc::Build::new();
     c_build.define("NDEBUG", None);          // disable assert()
-    c_build.define("_IS_RUN_MEM_SAFE_CHECK", "0"); // disable runtime bounds checks
+    c_build.define("_IS_RUN_MEM_SAFE_CHECK", "0"); // 禁用 C 库运行时边界检查（性能收益约 15-20%），升级 HDiffPatch 时注意测试
     c_build.define("_IS_OUT_DIFF_INFO", "0"); // suppress HDiffPatch progress logs
     c_build.opt_level(3);                    // -O3 (upstream default)
     for inc in includes {

@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::io::Read;
+use std::io::{Read, Write};
 use ring::digest::{Context, SHA256};
 use walkdir::WalkDir;
 
@@ -58,6 +58,7 @@ pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
 
 pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(base_dir)
+        .follow_links(false)
         .into_iter()
         .filter_map(move |entry| {
             let entry = entry.ok()?;
@@ -72,7 +73,7 @@ pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
 pub fn relative_dir_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
     let mut dirs = std::collections::BTreeMap::new();
     let base = base_dir.to_path_buf();
-    for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(base_dir).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_dir()
             && let Ok(rel) = entry.path().strip_prefix(&base)
         {
@@ -136,6 +137,11 @@ pub fn backup_root_dir(patch_dir: &Path) -> PathBuf {
 }
 
 pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<PathBuf> {
+    let data = std::fs::read(target_path)?;
+    write_backup(&data, target_path, base_dir, backup_root)
+}
+
+pub fn write_backup(data: &[u8], target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<PathBuf> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -151,21 +157,23 @@ pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) ->
     let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
     let mut backup_path = backup_dir.join(&backup_name);
     let mut retry = 0u32;
-
-    let content = std::fs::read(target_path)?;
+    let max_retries = 10;
 
     loop {
         match std::fs::OpenOptions::new()
-            .write(true)
             .create_new(true)
+            .write(true)
             .open(&backup_path)
         {
             Ok(mut f) => {
-                std::io::Write::write_all(&mut f, &content)?;
+                f.write_all(data)?;
                 return Ok(backup_path);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 retry += 1;
+                if retry >= max_retries {
+                    anyhow::bail!("备份文件重试已达上限 {max_retries} 次: {}", backup_path.display());
+                }
                 let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
                 backup_path = backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}_{retry}"));
             }

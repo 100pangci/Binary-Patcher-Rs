@@ -11,18 +11,14 @@ struct Cli {
     base_dir: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     let cli = Cli::parse();
 
-    match apply::apply_bundle(&cli.base_dir) {
-        Ok(()) => {
-            pause_if_needed();
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("错误: {e}");
-            pause_if_needed();
-            Err(e)
-        }
+    if let Err(e) = apply::apply_bundle(&cli.base_dir) {
+        eprintln!("错误: {e}");
+        pause_if_needed();
+        std::process::exit(1);
     }
+
+    pause_if_needed();
 }
