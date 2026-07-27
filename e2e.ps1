@@ -1,6 +1,5 @@
 ﻿#Requires -Version 7
 # binary_patcher 一键全流程测试
-# 双击或在项目根目录执行: ./e2e.ps1
 param([switch]$SkipBuild, [switch]$Quick)
 
 $ErrorActionPreference = 'Continue'
@@ -51,7 +50,7 @@ if (-not $SkipBuild) {
 }
 
 # ============================================================
-# 2. 生成随机测试集（涵盖 添加|删除|变更|嵌套目录）
+# 2. 生成随机测试集
 # ============================================================
 Write-Host "`n[2/8] 生成随机测试数据集..." -F Yellow
 $ws = "$root\tmp_test"; Remove-Item $ws -Recurse -Force -EA SilentlyContinue
@@ -59,11 +58,11 @@ $old = "$ws\Old"; $new = "$ws\New"
 New-Item -ItemType Directory -Path $old -Force | Out-Null
 New-Item -ItemType Directory -Path $new -Force | Out-Null
 
-# --- 完全相同（不产生 diff）---
+# --- 完全相同 ---
 'identical_static' | Out-File "$old\same.txt" -Encoding UTF8 -NoNewline
 'identical_static' | Out-File "$new\same.txt" -Encoding UTF8 -NoNewline
 
-# --- 大二进制变更（128KB 随机，中间 1KB 不同）---
+# --- 大二进制变更 ---
 WriteBin "$old\bigdata.bin" (RandBytes (128*1024))
 $nb = RandBytes (128*1024); $patch = RandBytes 1024
 for ($i = 0; $i -lt 1024; $i++) { $nb[32768 + $i] = $patch[$i] }
@@ -85,7 +84,7 @@ max_connections=100
 timeout=30
 '@ | Out-File "$new\config.ini" -Encoding UTF8 -NoNewline
 
-# --- 二进制资源变更（8KB tileset，中间 1KB 不同）---
+# --- 二进制资源变更 ---
 New-Item -ItemType Directory -Path "$old\tilesets" -Force | Out-Null
 New-Item -ItemType Directory -Path "$new\tilesets" -Force | Out-Null
 WriteBin "$old\tilesets\tileset1.png" (RandBytes 8192)
@@ -99,17 +98,17 @@ New-Item -ItemType Directory -Path "$new\data\scripts\ai" -Force | Out-Null
 'v1.0 behavior tree' | Out-File "$old\data\scripts\ai\enemy.lua" -Encoding UTF8 -NoNewline
 'v2.0 behavior tree with patrol routes and flee logic' | Out-File "$new\data\scripts\ai\enemy.lua" -Encoding UTF8 -NoNewline
 
-# --- 新增文件（Old 中不存在）---
+# --- 新增文件 ---
 '[NEW] fresh file content' | Out-File "$new\newly_added.txt" -Encoding UTF8 -NoNewline
 WriteBin "$new\new_plugin.dll" (RandBytes 2048)
 New-Item -ItemType Directory -Path "$new\audio" -Force | Out-Null
 WriteBin "$new\audio\bgm.ogg" (RandBytes 16384)
 
-# --- 删除文件（New 中不存在）---
+# --- 删除文件 ---
 'deprecated legacy' | Out-File "$old\deprecated.txt" -Encoding UTF8 -NoNewline
 WriteBin "$old\old_atlas.png" (RandBytes 4096)
 
-# --- 删除嵌套目录（整个目录连带子文件消失）---
+# --- 删除嵌套目录 ---
 New-Item -ItemType Directory -Path "$old\removed_module\sub" -Force | Out-Null
 'module config' | Out-File "$old\removed_module\config.xml" -Encoding UTF8 -NoNewline
 'subdata' | Out-File "$old\removed_module\sub\data.bin" -Encoding UTF8 -NoNewline
@@ -125,7 +124,7 @@ Remove-Item $t1 -Recurse -Force -EA SilentlyContinue
 New-Item -ItemType Directory -Path $t1 -Force | Out-Null
 Copy-Item $old "$t1\Old" -Recurse
 Copy-Item $new "$t1\New" -Recurse
-$LASTEXITCODE = 0; $bout = "`n" | cmd /c "$bp bundle --base-dir $t1" 2>&1
+$LASTEXITCODE = 0; $null = "`n" | & $bp bundle --base-dir $t1 2>&1
 $patchFiles = @(Get-ChildItem "$t1\Patch\*.patch" -Name)
 $manifest = if (Test-Path "$t1\Patch\manifest.json") { Get-Content "$t1\Patch\manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
 $chg = if ($manifest) { $manifest.changed.Count } else { 0 }
@@ -143,13 +142,13 @@ if (-not $Quick) {
     Write-Host "`n[4a/8] Stream 模式..." -F Yellow
     $t2 = "$ws\t2"; New-Item -ItemType Directory -Path $t2 -Force | Out-Null
     Copy-Item $old "$t2\Old" -Recurse; Copy-Item $new "$t2\New" -Recurse
-    "`n" | cmd /c "$bp --mode stream bundle --base-dir $t2" 2>&1 | Out-Null
+    $null = "`n" | & $bp --mode stream bundle --base-dir $t2 2>&1
     P 'Stream 模式'
 
     Write-Host "`n[4b/8] Fast 格式..." -F Yellow
     $t3 = "$ws\t3"; New-Item -ItemType Directory -Path $t3 -Force | Out-Null
     Copy-Item $old "$t3\Old" -Recurse; Copy-Item $new "$t3\New" -Recurse
-    "`n" | cmd /c "$bp --format fast bundle --base-dir $t3" 2>&1 | Out-Null
+    $null = "`n" | & $bp --format fast bundle --base-dir $t3 2>&1
     P 'Fast 格式'
 } else {
     Write-Host "`n[4/8] Stream/Fast 跳过 (Quick 模式)" -F DarkGray
@@ -164,7 +163,7 @@ Remove-Item $game -Recurse -Force -EA SilentlyContinue
 New-Item -ItemType Directory -Path $game -Force | Out-Null
 Copy-Item "$old\*" $game -Recurse
 Copy-Item -LiteralPath "$t1\Patch" "$game\Patch" -Recurse
-"`n" | cmd /c "$apply --base-dir $game" 2>&1 | Out-Null
+$null = "`n" | & $apply --base-dir $game 2>&1
 Start-Sleep -Milliseconds 300
 
 if (DirIdentical $new $game) { P 'apply: 逐文件 SHA256 全部一致' }
@@ -174,7 +173,7 @@ else { F 'apply: 文件校验失败' }
 # 6. 回滚
 # ============================================================
 Write-Host "`n[6/8] 回滚..." -F Yellow
-"y`n`n" | cmd /c "$roll --base-dir $game" 2>&1 | Out-Null
+$null = "y`n`n" | & $roll --base-dir $game 2>&1
 Start-Sleep -Milliseconds 300
 
 if (DirIdentical $old $game) { P 'rollback: 完全恢复到 Old 状态' }
@@ -188,23 +187,23 @@ $s = "$ws\single"; New-Item -ItemType Directory -Path $s -Force | Out-Null
 $of = "$s\old.bin"; $nf = "$s\new.bin"
 WriteBin $of (RandBytes 65536)
 WriteBin $nf (RandBytes 65536)
-"`n" | cmd /c "$bp create $of $nf $s\p.hdiff"  2>&1 | Out-Null
-"`n" | cmd /c "$bp apply  $of $s\p.hdiff $s\out.bin" 2>&1 | Out-Null
+$null = "`n" | & $bp create $of $nf $s\p.hdiff  2>&1
+$null = "`n" | & $bp apply  $of $s\p.hdiff $s\out.bin 2>&1
 if ((HashFile $nf) -eq (HashFile "$s\out.bin")) { P '单文件 create+apply' }
 else { F '单文件' }
 
 if (-not $Quick) {
-    "`n" | cmd /c "$bp --no-compress create $of $nf $s\p_nc.hdiff"  2>&1 | Out-Null
-    "`n" | cmd /c "$bp apply $of $s\p_nc.hdiff $s\out_nc.bin" 2>&1 | Out-Null
+    $null = "`n" | & $bp --no-compress create $of $nf $s\p_nc.hdiff  2>&1
+    $null = "`n" | & $bp apply $of $s\p_nc.hdiff $s\out_nc.bin 2>&1
     if ((HashFile $nf) -eq (HashFile "$s\out_nc.bin")) { P '--no-compress' } else { F '--no-compress' }
 
-    "`n" | cmd /c "$bp --format fast create $of $nf $s\p_f.hdiff"  2>&1 | Out-Null
-    "`n" | cmd /c "$bp apply $of $s\p_f.hdiff $s\out_f.bin" 2>&1 | Out-Null
+    $null = "`n" | & $bp --format fast create $of $nf $s\p_f.hdiff  2>&1
+    $null = "`n" | & $bp apply $of $s\p_f.hdiff $s\out_f.bin 2>&1
     if ((HashFile $nf) -eq (HashFile "$s\out_f.bin")) { P '--format fast' } else { F '--format fast' }
 
     $winit = "$ws\winit"; New-Item -ItemType Directory -Path $winit -Force | Out-Null
     Push-Location $winit
-    try { "`n" | cmd /c "$bp" 2>&1 | Out-Null; if ((Test-Path Old) -and (Test-Path New) -and (Test-Path Patch)) { P '工作区初始化' } else { F '工作区初始化' } }
+    try { $null = "`n" | & $bp 2>&1; if ((Test-Path Old) -and (Test-Path New) -and (Test-Path Patch)) { P '工作区初始化' } else { F '工作区初始化' } }
     finally { Pop-Location }
 
     [string[]]$psizes = Get-ChildItem "$s\*.hdiff" | ForEach-Object { "$($_.Name): $($_.Length)" }
