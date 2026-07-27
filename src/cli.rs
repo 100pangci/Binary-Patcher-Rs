@@ -4,19 +4,19 @@ use std::path::PathBuf;
 /// 为 clap Command 的各个参数应用 i18n 帮助文本。
 pub fn apply_arg_help(cmd: Command) -> Command {
     cmd
-        .mut_arg("no-compress", |a| a.help(crate::i18n::load_help_text("cli.no-compress")))
-        .mut_arg("mode", |a| a.help(crate::i18n::load_help_text("cli.mode")))
-        .mut_arg("format", |a| a.help(crate::i18n::load_help_text("cli.format")))
+        .mut_arg("no_compress", |a| a.help(crate::i18n::load_help_text("cli.no-compress")))
+        .mut_arg("patch_mode", |a| a.help(crate::i18n::load_help_text("cli.mode")))
+        .mut_arg("patch_format", |a| a.help(crate::i18n::load_help_text("cli.format")))
         .mut_arg("lang", |a| a.help(crate::i18n::load_help_text("cli.lang")))
-        .mut_arg("lang-dir", |a| a.help(crate::i18n::load_help_text("cli.lang-dir")))
+        .mut_arg("lang_dir", |a| a.help(crate::i18n::load_help_text("cli.lang-dir")))
 }
 
 /// 为 apply_patch 和 rollback_patch 共用参数应用 i18n 帮助文本。
 pub fn apply_base_arg_help(cmd: Command, base_key: &str) -> Command {
     cmd
-        .mut_arg("base-dir", |a| a.help(crate::i18n::load_help_text(base_key)))
+        .mut_arg("base_dir", |a| a.help(crate::i18n::load_help_text(base_key)))
         .mut_arg("lang", |a| a.help(crate::i18n::load_help_text("cli.lang")))
-        .mut_arg("lang-dir", |a| a.help(crate::i18n::load_help_text("cli.lang-dir")))
+        .mut_arg("lang_dir", |a| a.help(crate::i18n::load_help_text("cli.lang-dir")))
 }
 
 #[derive(Parser)]
