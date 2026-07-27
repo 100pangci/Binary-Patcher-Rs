@@ -1,11 +1,113 @@
 use crate::backup::{backup_root_dir, create_backup, restore_backup, write_backup};
 use crate::fs::copy_file;
-use crate::t;
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{apply_patch_auto, run_hpatchz};
 use crate::manifest::Manifest;
 use crate::path::{ensure_parent_dir, resolve_safe_path};
-use std::path::Path;
+use crate::t;
+use std::path::{Path, PathBuf};
+
+enum JournalEntry {
+    Patched { target: PathBuf },
+    Added { target: PathBuf, had_backup: bool },
+    Deleted { target: PathBuf },
+    DeletedDir { target: PathBuf },
+}
+
+struct ChangeJournal {
+    entries: Vec<JournalEntry>,
+    base_dir: PathBuf,
+    backup_root: PathBuf,
+}
+
+impl ChangeJournal {
+    fn new(base_dir: &Path, backup_root: &Path) -> Self {
+        ChangeJournal {
+            entries: Vec::new(),
+            base_dir: base_dir.to_path_buf(),
+            backup_root: backup_root.to_path_buf(),
+        }
+    }
+
+    fn push(&mut self, entry: JournalEntry) {
+        self.entries.push(entry);
+    }
+
+    fn rollback(&self) {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                JournalEntry::Patched { target }
+                | JournalEntry::Deleted { target } => {
+                    if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
+                        eprintln!("  [rollback] {}: {e}", target.display());
+                    } else {
+                        println!("  [rollback] restored: {}", target.display());
+                    }
+                }
+                JournalEntry::Added {
+                    target,
+                    had_backup: true,
+                } => {
+                    if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
+                        eprintln!("  [rollback] {}: {e}", target.display());
+                    } else {
+                        println!("  [rollback] restored: {}", target.display());
+                    }
+                }
+                JournalEntry::Added {
+                    target,
+                    had_backup: false,
+                } => {
+                    if target.exists() {
+                        if let Err(e) = std::fs::remove_file(target) {
+                            eprintln!("  [rollback] remove {}: {e}", target.display());
+                        } else {
+                            println!("  [rollback] removed: {}", target.display());
+                        }
+                    }
+                    if let Some(parent) = target.parent() {
+                        let _ = cleanup_single_empty_dir(parent, &self.base_dir);
+                    }
+                }
+                JournalEntry::DeletedDir { target } => {
+                    if !target.exists() {
+                        if let Err(e) = std::fs::create_dir_all(target) {
+                            eprintln!("  [rollback] recreate dir {}: {e}", target.display());
+                        } else {
+                            println!("  [rollback] recreated dir: {}", target.display());
+                        }
+                    }
+                }
+            }
+        }
+        println!("  [rollback] All changes have been undone.");
+    }
+}
+
+fn cleanup_single_empty_dir(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
+    let base_abs = std::path::absolute(base_dir)?;
+    let mut current = start_dir.to_path_buf();
+    loop {
+        if current == base_abs {
+            break;
+        }
+        if current.is_dir() {
+            let has_entries = current.read_dir()?.next().is_some();
+            if !has_entries {
+                std::fs::remove_dir(&current)?;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    Ok(())
+}
 
 pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
@@ -16,19 +118,31 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
     let manifest = Manifest::load(&patch_dir)?;
     let backup_root = backup_root_dir(&patch_dir);
+    let mut journal = ChangeJournal::new(base_dir, &backup_root);
 
     check_version_compat_or_prompt(&manifest)?;
     print_apply_summary(&manifest);
 
-    apply_changed_files(base_dir, &patch_dir, &manifest, &backup_root)?;
-    apply_added_files(base_dir, &patch_dir, &manifest, &backup_root)?;
-    apply_deleted_files(base_dir, &manifest, &backup_root)?;
-    remove_deleted_dirs(base_dir, &manifest)?;
+    let result = (|| -> anyhow::Result<()> {
+        apply_changed_files(base_dir, &patch_dir, &manifest, &mut journal)?;
+        apply_added_files(base_dir, &patch_dir, &manifest, &mut journal)?;
+        apply_deleted_files(base_dir, &manifest, &mut journal)?;
+        remove_deleted_dirs(base_dir, &manifest, &mut journal)?;
+        Ok(())
+    })();
 
-    println!("{}", t!("apply.complete"));
-    println!("{}", t!("apply.rollback-hint"));
-
-    Ok(())
+    match result {
+        Ok(()) => {
+            println!("{}", t!("apply.complete"));
+            println!("{}", t!("apply.rollback-hint"));
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("\n{}", t!("apply.rollback-triggered"));
+            journal.rollback();
+            Err(e)
+        }
+    }
 }
 
 fn check_version_compat_or_prompt(manifest: &Manifest) -> anyhow::Result<()> {
@@ -54,14 +168,22 @@ fn check_version_compat_or_prompt(manifest: &Manifest) -> anyhow::Result<()> {
 }
 
 fn print_apply_summary(manifest: &Manifest) {
-    println!("{}", t!("apply.summary", manifest.changed.len(), manifest.added.len(), manifest.deleted.len()));
+    println!(
+        "{}",
+        t!(
+            "apply.summary",
+            manifest.changed.len(),
+            manifest.added.len(),
+            manifest.deleted.len()
+        )
+    );
 }
 
 fn apply_changed_files(
     base_dir: &Path,
     patch_dir: &Path,
     manifest: &Manifest,
-    backup_root: &Path,
+    journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
     let total = manifest.changed.len();
     for (idx, item) in manifest.changed.iter().enumerate() {
@@ -75,8 +197,13 @@ fn apply_changed_files(
             anyhow::bail!("{}", t!("apply.missing-bail", idx + 1, total, item.path))
         }
 
-        let old_data = std::fs::read(&target_path)
-            .map_err(|e| anyhow::anyhow!("{} {}", t!("bundle.failed-read-old", target_path.display()), e))?;
+        let old_data = std::fs::read(&target_path).map_err(|e| {
+            anyhow::anyhow!(
+                "{} {}",
+                t!("bundle.failed-read-old", target_path.display()),
+                e
+            )
+        })?;
 
         let current_hash = sha256_of_bytes(&old_data);
         if current_hash != item.old_sha256 {
@@ -87,7 +214,7 @@ fn apply_changed_files(
             anyhow::bail!("{}", t!("apply.sha256-bail", idx + 1, total))
         }
 
-        let backup_path = write_backup(&old_data, &target_path, base_dir, backup_root)?;
+        let backup_path = write_backup(&old_data, &target_path, base_dir, &journal.backup_root)?;
         let backup_name = backup_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -100,20 +227,28 @@ fn apply_changed_files(
 
         let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
-        // Use backup_path as streaming fallback source in case OOM occurs during memory patching.
-        // At this point the original file at target_path is unmodified, but if streaming mode
-        // reads directly from disk, the backup file provides an identical and safe fallback.
         let new_data = apply_patch_auto(
-            &old_data, &backup_path, &patch_data, &target_path, thread_count,
+            &old_data,
+            &backup_path,
+            &patch_data,
+            &target_path,
+            thread_count,
         )?;
 
         let new_hash = sha256_of_bytes(&new_data);
         if new_hash != item.new_sha256 {
-            if let Err(be) = restore_backup(&target_path, base_dir, backup_root) {
-                anyhow::bail!("{}", t!("apply.sha256-fail-restore", item.path, be, target_path.display()));
+            if let Err(be) = restore_backup(&target_path, base_dir, &journal.backup_root) {
+                anyhow::bail!(
+                    "{}",
+                    t!("apply.sha256-fail-restore", item.path, be, target_path.display())
+                );
             }
             anyhow::bail!("{}", t!("apply.sha256-fail-auto-restore", item.path));
         }
+
+        journal.push(JournalEntry::Patched {
+            target: target_path,
+        });
     }
     Ok(())
 }
@@ -122,25 +257,35 @@ fn apply_added_files(
     base_dir: &Path,
     patch_dir: &Path,
     manifest: &Manifest,
-    backup_root: &Path,
+    journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
     for item in &manifest.added {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         let source_file = resolve_safe_path(patch_dir, &item.file)?;
         println!("{}", t!("apply.added", item.path));
-        if target_path.exists() {
-            let backup_name = create_backup(&target_path, base_dir, backup_root)?
+
+        let had_backup = if target_path.exists() {
+            let backup_name = create_backup(&target_path, base_dir, &journal.backup_root)?
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "?".to_string());
             println!("{}", t!("apply.target-exists-backup", backup_name));
-        }
+            true
+        } else {
+            false
+        };
+
         copy_file(&source_file, &target_path)?;
 
         let new_hash = sha256_of_file(&target_path)?;
         if new_hash != item.new_sha256 {
             anyhow::bail!("{}", t!("apply.added-verify-fail", item.path));
         }
+
+        journal.push(JournalEntry::Added {
+            target: target_path,
+            had_backup,
+        });
     }
     Ok(())
 }
@@ -148,12 +293,12 @@ fn apply_added_files(
 fn apply_deleted_files(
     base_dir: &Path,
     manifest: &Manifest,
-    backup_root: &Path,
+    journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
     for item in &manifest.deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         if target_path.exists() {
-            let backup_path = create_backup(&target_path, base_dir, backup_root)?;
+            let backup_path = create_backup(&target_path, base_dir, &journal.backup_root)?;
             let backup_name = backup_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -161,6 +306,9 @@ fn apply_deleted_files(
             println!("{}", t!("apply.deleted", item.path));
             println!("{}", t!("apply.backed-up", backup_name));
             std::fs::remove_file(&target_path)?;
+            journal.push(JournalEntry::Deleted {
+                target: target_path,
+            });
         }
     }
     Ok(())
@@ -169,12 +317,14 @@ fn apply_deleted_files(
 fn remove_deleted_dirs(
     base_dir: &Path,
     manifest: &Manifest,
+    journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
     for dir_path in &manifest.deleted_dirs {
         let target_dir = resolve_safe_path(base_dir, dir_path)?;
         if target_dir.exists() && target_dir.is_dir() {
             std::fs::remove_dir_all(&target_dir)?;
             println!("{}", t!("apply.deleted-dir", dir_path));
+            journal.push(JournalEntry::DeletedDir { target: target_dir });
         }
     }
     Ok(())
@@ -200,8 +350,16 @@ pub fn apply_single_patch(
 
     println!("{}", "-".repeat(30));
     println!("{}", t!("main.patch-created"));
-    println!("  - {} '{}'", t!("apply.output-generated"), output_file);
-    println!("  - {}: {}", t!("main.patch-size"), crate::fmt::format_size(output_size));
+    println!(
+        "  - {} '{}'",
+        t!("apply.output-generated"),
+        output_file
+    );
+    println!(
+        "  - {}: {}",
+        t!("main.patch-size"),
+        crate::fmt::format_size(output_size)
+    );
     println!("{}", "-".repeat(30));
 
     Ok(())

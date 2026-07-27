@@ -78,6 +78,7 @@
   "apply.version-cancelled": "用户取消了补丁应用",
   "apply.complete": "\n整包补丁应用完成！",
   "apply.rollback-hint": "如果需要回滚，请使用同目录下的 rollback_patch 恢复。",
+  "apply.rollback-triggered": "打补丁过程中发生错误，正在自动回滚所有变更...",
   "apply.output-generated": "输出文件 '{0}' 已生成。",
 
   "rollback.summary": "检测到可回滚内容: 变更 {0}，新增 {1}，删除 {2}",

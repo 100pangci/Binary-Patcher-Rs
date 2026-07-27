@@ -78,6 +78,7 @@
   "apply.version-cancelled": "User cancelled patch application.",
   "apply.complete": "Full patch bundle applied successfully!",
   "apply.rollback-hint": "To roll back, run rollback_patch in the same directory.",
+  "apply.rollback-triggered": "Error occurred during patching. Rolling back all changes...",
   "apply.output-generated": "Output file '{0}' has been generated.",
 
   "rollback.summary": "Detected rollback content: changed {0}, added {1}, deleted {2}",

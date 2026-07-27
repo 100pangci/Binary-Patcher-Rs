@@ -76,20 +76,20 @@ fn copy_tree_files(src: &Path, dst: &Path) {
 
 #[test]
 fn test_format_size_bytes() {
-    assert_eq!(binary_patcher::utils::format_size(512), "512 B");
+    assert_eq!(binary_patcher::fmt::format_size(512), "512 B");
 }
 
 #[test]
 fn test_format_size_kb() {
-    assert_eq!(binary_patcher::utils::format_size(1024), "1.00 KB");
-    assert_eq!(binary_patcher::utils::format_size(1536), "1.50 KB");
+    assert_eq!(binary_patcher::fmt::format_size(1024), "1.00 KB");
+    assert_eq!(binary_patcher::fmt::format_size(1536), "1.50 KB");
 }
 
 #[test]
 fn test_format_size_mb() {
-    assert_eq!(binary_patcher::utils::format_size(1024 * 1024), "1.00 MB");
+    assert_eq!(binary_patcher::fmt::format_size(1024 * 1024), "1.00 MB");
     assert_eq!(
-        binary_patcher::utils::format_size(2 * 1024 * 1024),
+        binary_patcher::fmt::format_size(2 * 1024 * 1024),
         "2.00 MB"
     );
 }
@@ -97,14 +97,14 @@ fn test_format_size_mb() {
 #[test]
 fn test_format_size_gb() {
     assert_eq!(
-        binary_patcher::utils::format_size(1024 * 1024 * 1024),
+        binary_patcher::fmt::format_size(1024 * 1024 * 1024),
         "1.00 GB"
     );
 }
 
 #[test]
 fn test_format_size_zero() {
-    assert_eq!(binary_patcher::utils::format_size(0), "0 B");
+    assert_eq!(binary_patcher::fmt::format_size(0), "0 B");
 }
 
 // ===========================================================================
@@ -118,7 +118,7 @@ fn test_sha256_known_hash() {
     std::fs::write(&file_path, "hello world").unwrap();
     let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
     assert_eq!(
-        binary_patcher::utils::sha256_of_file(&file_path).unwrap(),
+        binary_patcher::hash::sha256_of_file(&file_path).unwrap(),
         expected
     );
 }
@@ -130,7 +130,7 @@ fn test_sha256_empty_file() {
     std::fs::write(&file_path, "").unwrap();
     let expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     assert_eq!(
-        binary_patcher::utils::sha256_of_file(&file_path).unwrap(),
+        binary_patcher::hash::sha256_of_file(&file_path).unwrap(),
         expected
     );
 }
@@ -142,7 +142,7 @@ fn test_sha256_empty_file() {
 #[test]
 fn test_resolve_normal_path() {
     let dir = tempfile::tempdir().unwrap();
-    let target = binary_patcher::utils::resolve_safe_path(dir.path(), "sub/file.txt").unwrap();
+    let target = binary_patcher::path::resolve_safe_path(dir.path(), "sub/file.txt").unwrap();
     let expected = dir.path().join("sub/file.txt");
     assert_eq!(target, expected);
 }
@@ -150,13 +150,13 @@ fn test_resolve_normal_path() {
 #[test]
 fn test_resolve_rejects_traversal() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "../outside.txt").is_err());
+    assert!(binary_patcher::path::resolve_safe_path(dir.path(), "../outside.txt").is_err());
 }
 
 #[test]
 fn test_resolve_deep_traversal() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "sub/../../outside.txt").is_err());
+    assert!(binary_patcher::path::resolve_safe_path(dir.path(), "sub/../../outside.txt").is_err());
 }
 
 // ===========================================================================
@@ -171,7 +171,7 @@ fn test_iter_files() {
     std::fs::write(dir.path().join("sub/b.txt"), "b").unwrap();
     std::fs::write(dir.path().join("sub/subsub/c.txt"), "c").unwrap();
 
-    let files: Vec<_> = binary_patcher::utils::iter_files(dir.path()).collect();
+    let files: Vec<_> = binary_patcher::fs::iter_files(dir.path()).collect();
     assert_eq!(files.len(), 3);
 }
 
@@ -182,7 +182,7 @@ fn test_relative_file_map() {
     std::fs::write(dir.path().join("dir1/a.txt"), "a").unwrap();
     std::fs::write(dir.path().join("b.txt"), "b").unwrap();
 
-    let mapping = binary_patcher::utils::relative_file_map(dir.path());
+    let mapping = binary_patcher::fs::relative_file_map(dir.path());
     assert!(mapping.contains_key("dir1/a.txt"));
     assert!(mapping.contains_key("b.txt"));
 }
@@ -190,7 +190,7 @@ fn test_relative_file_map() {
 #[test]
 fn test_empty_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let files: Vec<_> = binary_patcher::utils::iter_files(dir.path()).collect();
+    let files: Vec<_> = binary_patcher::fs::iter_files(dir.path()).collect();
     assert!(files.is_empty());
 }
 
@@ -202,7 +202,7 @@ fn test_relative_dir_map() {
     std::fs::create_dir_all(dir.path().join("dir2")).unwrap();
     std::fs::write(dir.path().join("dir2/b.txt"), "b").unwrap();
 
-    let mapping = binary_patcher::utils::relative_dir_map(dir.path());
+    let mapping = binary_patcher::fs::relative_dir_map(dir.path());
     assert!(mapping.contains_key("dir1"));
     assert!(mapping.contains_key("dir1/sub"));
     assert!(mapping.contains_key("dir2"));
@@ -215,7 +215,7 @@ fn test_relative_dir_map_with_empty_dir() {
     std::fs::create_dir_all(dir.path().join("empty_dir")).unwrap();
     std::fs::create_dir_all(dir.path().join("parent/child")).unwrap();
 
-    let mapping = binary_patcher::utils::relative_dir_map(dir.path());
+    let mapping = binary_patcher::fs::relative_dir_map(dir.path());
     assert!(mapping.contains_key("empty_dir"));
     assert!(mapping.contains_key("parent"));
     assert!(mapping.contains_key("parent/child"));
@@ -275,7 +275,7 @@ fn test_backup_created() {
     let backup_root = dir.path().join("backups");
     let target = dir.path().join("original.txt");
     std::fs::write(&target, "content").unwrap();
-    let backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
+    let backup = binary_patcher::backup::create_backup(&target, dir.path(), &backup_root).unwrap();
     assert!(backup.exists());
     assert_eq!(std::fs::read_to_string(&backup).unwrap(), "content");
 }
@@ -286,7 +286,7 @@ fn test_backup_suffix() {
     let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "original").unwrap();
-    let backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
+    let backup = binary_patcher::backup::create_backup(&target, dir.path(), &backup_root).unwrap();
     assert!(backup.to_string_lossy().ends_with(".backup_before_patch"));
 }
 
@@ -296,9 +296,9 @@ fn test_restore_backup() {
     let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "modified").unwrap();
-    let _backup = binary_patcher::utils::create_backup(&target, dir.path(), &backup_root).unwrap();
+    let _backup = binary_patcher::backup::create_backup(&target, dir.path(), &backup_root).unwrap();
     std::fs::write(&target, "new content").unwrap();
-    assert!(binary_patcher::utils::restore_backup(&target, dir.path(), &backup_root).unwrap());
+    assert!(binary_patcher::backup::restore_backup(&target, dir.path(), &backup_root).unwrap());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "modified");
 }
 
@@ -307,7 +307,7 @@ fn test_restore_backup_no_backup() {
     let dir = tempfile::tempdir().unwrap();
     let backup_root = dir.path().join("backups");
     let target = dir.path().join("file.txt");
-    assert!(!binary_patcher::utils::restore_backup(&target, dir.path(), &backup_root).unwrap());
+    assert!(!binary_patcher::backup::restore_backup(&target, dir.path(), &backup_root).unwrap());
 }
 
 // ===========================================================================
@@ -393,6 +393,74 @@ fn test_full_workflow() {
         game_dir.join("deep/nested/old_cache.tmp").exists(),
         "file deep/nested/old_cache.tmp should be restored after rollback"
     );
+}
+
+// ===========================================================================
+// Apply failure auto rollback
+// ===========================================================================
+
+#[test]
+fn test_apply_failure_auto_rollback() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+
+    build_workspace(&base_dir);
+
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        true,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let patch_dir = base_dir.join("Patch");
+
+    // Simulate end-user: copy Old/ -> game dir + Patch/
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&patch_dir, &game_patch);
+
+    // Corrupt one patch file to trigger failure after some files are processed
+    let mut corrupted = false;
+    for entry in std::fs::read_dir(&game_patch).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().map(|e| e == "patch").unwrap_or(false) {
+            std::fs::write(&path, b"CORRUPTED PATCH DATA").unwrap();
+            corrupted = true;
+            break;
+        }
+    }
+    assert!(corrupted, "should have corrupted at least one patch file");
+
+    // Apply should fail
+    let result = binary_patcher::apply::apply_bundle(&game_dir);
+    assert!(result.is_err(), "apply_bundle should fail with corrupted patch");
+
+    // Verify rolled back state matches Old/
+    let old_files = all_file_relpaths(&base_dir.join("Old"));
+    let game_files_after: Vec<String> = all_file_relpaths(&game_dir)
+        .into_iter()
+        .filter(|f| !f.contains(".backup_before_patch"))
+        .collect();
+
+    assert_eq!(
+        old_files, game_files_after,
+        "files should be fully rolled back after failed apply"
+    );
+
+    // Verify content matches too (byte-level)
+    let old_root = base_dir.join("Old");
+    for rel in &old_files {
+        let old_content = std::fs::read(old_root.join(rel)).unwrap();
+        let game_content = std::fs::read(game_dir.join(rel)).unwrap();
+        assert_eq!(
+            old_content, game_content,
+            "file {rel} content should match after rollback"
+        );
+    }
 }
 
 // ===========================================================================
@@ -605,7 +673,7 @@ fn test_relative_maps_returns_both() {
     std::fs::write(dir.path().join("sub/a.txt"), "a").unwrap();
     std::fs::write(dir.path().join("b.txt"), "b").unwrap();
 
-    let (files, dirs) = binary_patcher::utils::relative_maps(dir.path());
+    let (files, dirs) = binary_patcher::fs::relative_maps(dir.path());
     assert!(files.contains_key("sub/a.txt"));
     assert!(files.contains_key("b.txt"));
     assert!(dirs.contains_key("sub"));
@@ -626,10 +694,10 @@ fn test_backup_retry_on_collision() {
     std::fs::write(&target, "original").unwrap();
 
     let backup1 =
-        binary_patcher::utils::write_backup(b"original", &target, dir.path(), &backup_root)
+        binary_patcher::backup::write_backup(b"original", &target, dir.path(), &backup_root)
             .unwrap();
     let backup2 =
-        binary_patcher::utils::write_backup(b"modified", &target, dir.path(), &backup_root)
+        binary_patcher::backup::write_backup(b"modified", &target, dir.path(), &backup_root)
             .unwrap();
     assert_ne!(backup1, backup2);
     assert!(backup2.to_string_lossy().contains(".backup_before_patch"));
@@ -687,7 +755,7 @@ fn test_resolve_safe_path_rejects_traversal_in_load() {
 
     // Verify manifest loads but resolve_safe_path catches the traversal during apply
     assert!(binary_patcher::manifest::Manifest::load(&dir.path().join("Patch")).is_ok());
-    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "../outside.txt").is_err());
+    assert!(binary_patcher::path::resolve_safe_path(dir.path(), "../outside.txt").is_err());
 }
 
 // ===========================================================================
@@ -791,7 +859,7 @@ fn test_version_compat_minor_mismatch() {
 #[test]
 fn test_format_size_tb() {
     assert_eq!(
-        binary_patcher::utils::format_size(1024u64 * 1024 * 1024 * 1024),
+        binary_patcher::fmt::format_size(1024u64 * 1024 * 1024 * 1024),
         "1.00 TB"
     );
 }

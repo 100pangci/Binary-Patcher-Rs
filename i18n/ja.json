@@ -78,6 +78,7 @@
   "apply.version-cancelled": "ユーザーがパッチの適用をキャンセルしました",
   "apply.complete": "\nパックパッチの適用が完了しました！",
   "apply.rollback-hint": "ロールバックするには、同じディレクトリで rollback_patch を実行してください。",
+  "apply.rollback-triggered": "パッチ適用中にエラーが発生しました。すべての変更をロールバックしています...",
   "apply.output-generated": "出力ファイル '{0}' が生成されました。",
 
   "rollback.summary": "ロールバック可能な内容を検出: 変更 {0}、追加 {1}、削除 {2}",
