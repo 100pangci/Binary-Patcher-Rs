@@ -1,9 +1,16 @@
-use std::path::Path;
+//! 补丁应用逻辑：校验 SHA256 → 备份 → 打补丁 → 校验输出 → 失败自动回滚。
+
 use crate::ffi;
 use crate::hdiffpatch::run_hpatchz;
 use crate::manifest::Manifest;
-use crate::utils::{sha256_of_bytes, sha256_of_file, ensure_parent_dir, create_backup, write_backup, restore_backup, resolve_safe_path, copy_file, backup_root_dir};
+use crate::utils::{
+    backup_root_dir, copy_file, create_backup, ensure_parent_dir, resolve_safe_path,
+    restore_backup, sha256_of_bytes, sha256_of_file, write_backup,
+};
+use std::path::Path;
 
+/// 将指定目录下的 Patch 补丁包应用到目标目录。
+/// 包括校验 SHA256、备份原文件、执行补丁、校验输出。
 pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
 
@@ -20,7 +27,10 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
     match crate::manifest::check_version_compat(&manifest.format) {
         crate::manifest::VersionCompat::Compatible => {}
-        crate::manifest::VersionCompat::Incompatible { manifest: mver, tool: tver } => {
+        crate::manifest::VersionCompat::Incompatible {
+            manifest: mver,
+            tool: tver,
+        } => {
             eprintln!("警告: manifest 由 binary_patcher v{mver} 创建，");
             eprintln!("      当前工具版本为 v{tver}，不保证完全兼容。");
             print!("是否仍要应用补丁? [y/N]: ");
@@ -38,7 +48,12 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let added = &manifest.added;
     let deleted = &manifest.deleted;
 
-    println!("检测到补丁内容: 变更 {}，新增 {}，删除 {}", changed.len(), added.len(), deleted.len());
+    println!(
+        "检测到补丁内容: 变更 {}，新增 {}，删除 {}",
+        changed.len(),
+        added.len(),
+        deleted.len()
+    );
 
     let total = changed.len();
     for (idx, item) in changed.iter().enumerate() {
@@ -49,7 +64,12 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
             eprintln!("错误: 缺少需要打补丁的旧文件: {}", target_path.display());
             eprintln!("提示: 已成功处理 {idx}/{total} 个文件，已处理文件不会自动回滚。");
             eprintln!("      如需恢复，请使用 rollback_patch 或从备份文件手动恢复。");
-            anyhow::bail!("已处理 {idx}/{total} 个文件后失败，缺少文件")
+            anyhow::bail!(
+                "处理第 {}/{} 个文件时失败：缺少文件 {}",
+                idx + 1,
+                total,
+                item.path
+            )
         }
 
         // 一次读取，用于 SHA256 校验和内存补丁
@@ -62,7 +82,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
             eprintln!("  - 当前 SHA256: {}", current_hash);
             eprintln!("  - 预期 SHA256: {}", item.old_sha256);
             eprintln!("提示: 已成功处理 {idx}/{total} 个文件，已处理文件不会自动回滚。");
-            anyhow::bail!("SHA256 校验失败，中断于第 {}/{} 个文件", idx, total)
+            anyhow::bail!("SHA256 校验失败，中断于第 {}/{} 个文件", idx + 1, total)
         }
 
         let backup_path = write_backup(&old_data, &target_path, base_dir, &backup_root)?;
@@ -78,7 +98,11 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
         let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
-        let new_data = match crate::hdiffpatch::apply_patch_with_retry(&old_data, &patch_data, thread_count) {
+        let new_data = match crate::hdiffpatch::apply_patch_with_retry(
+            &old_data,
+            &patch_data,
+            thread_count,
+        ) {
             Ok(data) => data,
             Err(e) if e.is_oom() => {
                 eprintln!("注意: 内存不足，自动切换为流式模式");
@@ -92,7 +116,10 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
                 let new_bytes = match std::fs::read(&target_path) {
                     Ok(b) => b,
                     Err(e) => {
-                        eprintln!("错误: 流式补丁写入后读取校验失败: {}", target_path.display());
+                        eprintln!(
+                            "错误: 流式补丁写入后读取校验失败: {}",
+                            target_path.display()
+                        );
                         eprintln!("       IO 错误: {e} (可能是磁盘空间不足)");
                         if let Err(be) = restore_backup(&target_path, base_dir, &backup_root) {
                             anyhow::bail!("自动恢复也失败: {be} — 文件可能已损坏")
@@ -105,7 +132,9 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
                     if let Err(be) = restore_backup(&target_path, base_dir, &backup_root) {
                         anyhow::bail!(
                             "错误: 补丁应用后校验失败: {}\n自动恢复也失败: {}\n文件可能已损坏: {}",
-                            item.path, be, target_path.display()
+                            item.path,
+                            be,
+                            target_path.display()
                         );
                     }
                     anyhow::bail!(
@@ -128,7 +157,9 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
             if let Err(be) = restore_backup(&target_path, base_dir, &backup_root) {
                 anyhow::bail!(
                     "错误: 补丁应用后校验失败: {}\n自动恢复也失败: {}\n文件可能已损坏: {}",
-                    item.path, be, target_path.display()
+                    item.path,
+                    be,
+                    target_path.display()
                 );
             }
             anyhow::bail!(
@@ -186,7 +217,12 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn apply_single_patch(old_file: &str, patch_file: &str, output_file: &str) -> anyhow::Result<()> {
+/// 对单个文件应用补丁：old + patch → output。
+pub fn apply_single_patch(
+    old_file: &str,
+    patch_file: &str,
+    output_file: &str,
+) -> anyhow::Result<()> {
     let old_path = std::path::Path::new(old_file);
     let patch_path = std::path::Path::new(patch_file);
     let output_path = std::path::Path::new(output_file);
@@ -203,7 +239,10 @@ pub fn apply_single_patch(old_file: &str, patch_file: &str, output_file: &str) -
     println!("{}", "-".repeat(30));
     println!("补丁应用成功！");
     println!("  - 输出文件 '{output_file}' 已生成。");
-    println!("  - 输出文件大小: {}", crate::utils::format_size(output_size));
+    println!(
+        "  - 输出文件大小: {}",
+        crate::utils::format_size(output_size)
+    );
     println!("{}", "-".repeat(30));
 
     Ok(())

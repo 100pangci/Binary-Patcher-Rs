@@ -1,8 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::io::{Read, Write};
+//! 工具函数：SHA256、路径安全解析、文件备份/恢复、格式化输出等。
+
 use ring::digest::{Context, SHA256};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+/// 如果 stdin 是终端则暂停等待回车，否则无操作。
+/// 用于双击运行时保持窗口不立即关闭。
 pub fn pause_if_needed() {
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return;
@@ -11,6 +15,7 @@ pub fn pause_if_needed() {
     let _ = std::io::stdin().read_line(&mut String::new());
 }
 
+/// 将字节数格式化为人类可读字符串（B/KB/MB/GB/TB）。
 pub fn format_size(size_bytes: u64) -> String {
     if size_bytes < 1024 {
         format!("{size_bytes} B")
@@ -21,10 +26,14 @@ pub fn format_size(size_bytes: u64) -> String {
     } else if size_bytes < 1024u64 * 1024 * 1024 * 1024 {
         format!("{:.2} GB", size_bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     } else {
-        format!("{:.2} TB", size_bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0))
+        format!(
+            "{:.2} TB",
+            size_bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0)
+        )
     }
 }
 
+/// 计算文件的 SHA256 十六进制字符串，流式读取避免大文件 OOM。
 pub fn sha256_of_file(path: &Path) -> anyhow::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut ctx = Context::new(&SHA256);
@@ -39,16 +48,19 @@ pub fn sha256_of_file(path: &Path) -> anyhow::Result<String> {
     Ok(sha256_hex(ctx.finish()))
 }
 
+/// 计算内存中字节数据的 SHA256 十六进制字符串。
 pub fn sha256_of_bytes(data: &[u8]) -> String {
     let mut ctx = Context::new(&SHA256);
     ctx.update(data);
     sha256_hex(ctx.finish())
 }
 
+/// 将 ring 的 Digest 转为十六进制字符串。
 fn sha256_hex(digest: ring::digest::Digest) -> String {
     hex::encode(digest.as_ref())
 }
 
+/// 确保目标路径的父目录存在（递归创建）。
 pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -56,11 +68,12 @@ pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 递归遍历目录，返回所有文件的路径（不跟随符号链接）。
 pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(base_dir)
         .follow_links(false)
         .into_iter()
-        .filter_map(move |entry| {
+        .filter_map(|entry| {
             let entry = entry.ok()?;
             if entry.file_type().is_file() {
                 Some(entry.path().to_path_buf())
@@ -70,19 +83,33 @@ pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
         })
 }
 
+/// 递归遍历目录，返回子目录的相对路径 → 绝对路径映射。
 pub fn relative_dir_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
     let (_, dirs) = relative_maps(base_dir);
     dirs
 }
 
-pub fn relative_maps(base_dir: &Path) -> (std::collections::BTreeMap<String, PathBuf>, std::collections::BTreeMap<String, PathBuf>) {
+/// 递归遍历目录，同时返回文件映射和目录映射。
+/// key 为反斜杠归一化后的相对路径，value 为绝对路径。
+pub fn relative_maps(
+    base_dir: &Path,
+) -> (
+    std::collections::BTreeMap<String, PathBuf>,
+    std::collections::BTreeMap<String, PathBuf>,
+) {
     let mut files = std::collections::BTreeMap::new();
     let mut dirs = std::collections::BTreeMap::new();
     let base = base_dir.to_path_buf();
-    for entry in WalkDir::new(base_dir).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(base_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if let Ok(rel) = entry.path().strip_prefix(&base) {
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            if rel_str.is_empty() { continue; }
+            if rel_str.is_empty() {
+                continue;
+            }
             if entry.file_type().is_file() {
                 files.insert(rel_str, entry.path().to_path_buf());
             } else if entry.file_type().is_dir() {
@@ -93,11 +120,13 @@ pub fn relative_maps(base_dir: &Path) -> (std::collections::BTreeMap<String, Pat
     (files, dirs)
 }
 
+/// 递归遍历目录，返回文件的相对路径 → 绝对路径 BTreeMap。
 pub fn relative_file_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
     let (files, _) = relative_maps(base_dir);
     files
 }
 
+/// 在 base_dir 下安全解析相对路径，拒绝 `../` 逃逸和绝对路径组件。
 pub fn resolve_safe_path(base_dir: &Path, relative_path: &str) -> anyhow::Result<PathBuf> {
     let base_abs = std::path::absolute(base_dir)?;
     let mut result = base_abs.clone();
@@ -124,6 +153,7 @@ pub fn resolve_safe_path(base_dir: &Path, relative_path: &str) -> anyhow::Result
     }
 }
 
+/// 将绝对路径转为相对于 base_dir 的显示路径，便于输出。
 pub fn display_path(path: &Path, base_dir: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(base_dir) {
         rel.to_string_lossy().replace('\\', "/")
@@ -132,24 +162,38 @@ pub fn display_path(path: &Path, base_dir: &Path) -> String {
     }
 }
 
+/// 备份文件的后缀。
 pub const BACKUP_SUFFIX: &str = ".backup_before_patch";
 
+/// 备份根目录（Patch/.backup_before_patch）。
 pub fn backup_root_dir(patch_dir: &Path) -> PathBuf {
     patch_dir.join(".backup_before_patch")
 }
 
-pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<PathBuf> {
+/// 读取目标文件并创建备份，返回备份路径。
+pub fn create_backup(
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<PathBuf> {
     let data = std::fs::read(target_path)?;
     write_backup(&data, target_path, base_dir, backup_root)
 }
 
-pub fn write_backup(data: &[u8], target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<PathBuf> {
+/// 将已有数据的备份写入到 backup_root 下（同名冲突时追加时间戳重试）。
+pub fn write_backup(
+    data: &[u8],
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<PathBuf> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("无效的文件路径: {}", target_path.display()))?;
 
-    let rel = target_path.parent()
+    let rel = target_path
+        .parent()
         .and_then(|p| p.strip_prefix(base_dir).ok())
         .unwrap_or(Path::new(""));
 
@@ -174,17 +218,27 @@ pub fn write_backup(data: &[u8], target_path: &Path, base_dir: &Path, backup_roo
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 retry += 1;
                 if retry >= max_retries {
-                    anyhow::bail!("备份文件重试已达上限 {max_retries} 次: {}", backup_path.display());
+                    anyhow::bail!(
+                        "备份文件重试已达上限 {max_retries} 次: {}",
+                        backup_path.display()
+                    );
                 }
                 let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
-                backup_path = backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}_{retry}"));
+                backup_path =
+                    backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}_{retry}"));
             }
             Err(e) => return Err(e.into()),
         }
     }
 }
 
-pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<bool> {
+/// 从 backup_root 恢复最新备份到 target_path，返回是否找到备份。
+/// 兼容旧版原地备份格式。
+pub fn restore_backup(
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<bool> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -193,7 +247,8 @@ pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -
     let backup_prefix = format!("{file_name}{BACKUP_SUFFIX}");
 
     let find_newest = |dir: &Path| -> Option<PathBuf> {
-        std::fs::read_dir(dir).ok()?
+        std::fs::read_dir(dir)
+            .ok()?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| {
@@ -220,7 +275,8 @@ pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -
     };
 
     // Try new backup location first
-    let rel = target_path.parent()
+    let rel = target_path
+        .parent()
         .and_then(|p| p.strip_prefix(base_dir).ok())
         .unwrap_or(Path::new(""));
     let backup_dir = backup_root.join(rel);
@@ -237,6 +293,7 @@ pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -
     Ok(false)
 }
 
+/// 复制文件（自动创建目标父目录）。
 pub fn copy_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     ensure_parent_dir(dst)?;
     std::fs::copy(src, dst)?;

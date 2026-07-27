@@ -1,3 +1,5 @@
+//! HDiffPatch C 库的 FFI 绑定。封装不安全 C 函数调用，提供类型安全的 Rust 接口。
+
 use std::ffi::c_void;
 use std::os::raw::c_char;
 use std::ptr::null_mut;
@@ -69,13 +71,17 @@ unsafe extern "C" {
     fn hdiffpatch_free(ptr: *mut c_void);
 }
 
+/// HDiffPatch C 库返回的错误。
 #[derive(Debug, Clone)]
 pub struct PatchError {
+    /// 错误码（-8 OOM，-1~-7 具体错误）。
     pub code: i32,
+    /// 人类可读的错误描述。
     pub message: String,
 }
 
 impl PatchError {
+    /// 错误码是否为 OOM（-8）。
     pub fn is_oom(&self) -> bool {
         self.code == -8
     }
@@ -88,6 +94,15 @@ impl std::fmt::Display for PatchError {
 }
 
 impl std::error::Error for PatchError {}
+
+impl From<std::io::Error> for PatchError {
+    fn from(e: std::io::Error) -> Self {
+        PatchError {
+            code: -1,
+            message: e.to_string(),
+        }
+    }
+}
 
 fn error_msg(code: i32) -> String {
     match code {
@@ -104,6 +119,7 @@ fn error_msg(code: i32) -> String {
     .to_string()
 }
 
+/// 全内存创建补丁：读取 old_data → new_data 的差异，返回补丁字节。
 pub fn create_patch(
     old_data: &[u8],
     new_data: &[u8],
@@ -131,7 +147,9 @@ pub fn create_patch(
 
     if ret != 0 {
         if !out_patch.is_null() {
-            unsafe { hdiffpatch_free(out_patch as *mut c_void); }
+            unsafe {
+                hdiffpatch_free(out_patch as *mut c_void);
+            }
         }
         return Err(PatchError {
             code: ret,
@@ -140,21 +158,29 @@ pub fn create_patch(
     }
 
     if out_patch.is_null() && out_patch_size > 0 {
-        return Err(PatchError { code: -1, message: "内部错误: C 库返回了空指针但声明了非零长度".into() });
+        return Err(PatchError {
+            code: -1,
+            message: "内部错误: C 库返回了空指针但声明了非零长度".into(),
+        });
     }
 
     if out_patch_size == 0 {
         if !out_patch.is_null() {
-            unsafe { hdiffpatch_free(out_patch as *mut c_void); }
+            unsafe {
+                hdiffpatch_free(out_patch as *mut c_void);
+            }
         }
         return Ok(Vec::new());
     }
 
     let patch = unsafe { std::slice::from_raw_parts(out_patch, out_patch_size).to_vec() };
-    unsafe { hdiffpatch_free(out_patch as *mut c_void); }
+    unsafe {
+        hdiffpatch_free(out_patch as *mut c_void);
+    }
     Ok(patch)
 }
 
+/// 流式创建补丁：直接从文件读取并输出补丁，低内存占用。
 pub fn create_patch_file(
     old_file: &str,
     new_file: &str,
@@ -198,6 +224,7 @@ pub fn create_patch_file(
     Ok(())
 }
 
+/// 全内存应用补丁：将 patch 应用到 old_data，返回新数据。
 pub fn apply_patch(
     old_data: &[u8],
     patch_data: &[u8],
@@ -221,7 +248,9 @@ pub fn apply_patch(
 
     if ret != 0 {
         if !out_new_data.is_null() {
-            unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+            unsafe {
+                hdiffpatch_free(out_new_data as *mut c_void);
+            }
         }
         return Err(PatchError {
             code: ret,
@@ -230,21 +259,29 @@ pub fn apply_patch(
     }
 
     if out_new_data.is_null() && out_new_size > 0 {
-        return Err(PatchError { code: -1, message: "内部错误: C 库返回了空指针但声明了非零长度".into() });
+        return Err(PatchError {
+            code: -1,
+            message: "内部错误: C 库返回了空指针但声明了非零长度".into(),
+        });
     }
 
     if out_new_size == 0 {
         if !out_new_data.is_null() {
-            unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+            unsafe {
+                hdiffpatch_free(out_new_data as *mut c_void);
+            }
         }
         return Ok(Vec::new());
     }
 
     let new_data = unsafe { std::slice::from_raw_parts(out_new_data, out_new_size).to_vec() };
-    unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+    unsafe {
+        hdiffpatch_free(out_new_data as *mut c_void);
+    }
     Ok(new_data)
 }
 
+/// 流式应用补丁：从 old_file 读取，将 patch 应用到 output_file，低内存。
 pub fn apply_patch_file(
     old_file: &str,
     patch_data: &[u8],

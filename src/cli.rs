@@ -1,3 +1,5 @@
+//! CLI 参数解析：使用 clap derive 模式定义所有命令行接口。
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]

@@ -14,18 +14,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            ext: ""
+            archive_ext: tar.gz
+            archive_cmd: tar czf binary_patcher_rs_toolkit_linux.tar.gz binary_patcher_rs
+          - os: macos
+            runner: macos-latest
+            ext: ""
+            archive_ext: tar.gz
+            archive_cmd: tar czf binary_patcher_rs_toolkit_macos.tar.gz binary_patcher_rs
+          - os: windows
+            runner: windows-latest
+            ext: ".exe"
+            archive_ext: zip
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential nasm
+
       - name: Build release
         run: cargo build --release
 
-      - name: Package
+      - name: Package (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          mkdir -p binary_patcher_rs
+          cp target/release/binary_patcher${{ matrix.ext }} binary_patcher_rs/
+          cp target/release/apply_patch${{ matrix.ext }} binary_patcher_rs/
+          cp target/release/rollback_patch${{ matrix.ext }} binary_patcher_rs/
+          ${{ matrix.archive_cmd }}
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows'
         shell: pwsh
         run: |
           $stage = "binary_patcher_rs"
@@ -38,60 +69,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-patcher-windows
-          path: binary_patcher_rs_toolkit_win.zip
-
-  build-linux:
-    name: Build Linux
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Package
-        run: |
-          mkdir -p binary_patcher_rs
-          cp target/release/binary_patcher target/release/apply_patch target/release/rollback_patch binary_patcher_rs/
-          tar czf binary_patcher_rs_toolkit_linux.tar.gz binary_patcher_rs
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: binary-patcher-linux
-          path: binary_patcher_rs_toolkit_linux.tar.gz
-
-  build-macos:
-    name: Build macOS
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Package
-        run: |
-          mkdir -p binary_patcher_rs
-          cp target/release/binary_patcher target/release/apply_patch target/release/rollback_patch binary_patcher_rs/
-          tar czf binary_patcher_rs_toolkit_macos.tar.gz binary_patcher_rs
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: binary-patcher-macos
-          path: binary_patcher_rs_toolkit_macos.tar.gz
+          name: binary-patcher-${{ matrix.os }}
+          path: binary_patcher_rs_toolkit_${{ matrix.os }}.${{ matrix.archive_ext }}
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build]
 
     steps:
       - uses: actions/download-artifact@v4

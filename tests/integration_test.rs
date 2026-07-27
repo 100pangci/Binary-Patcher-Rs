@@ -14,7 +14,11 @@ fn build_workspace(base_dir: &Path) -> (PathBuf, PathBuf) {
 
     // changed
     std::fs::write(old_dir.join("config.ini"), "[section]\nkey=old\n").unwrap();
-    std::fs::write(new_dir.join("config.ini"), "[section]\nkey=new\nport=8080\n").unwrap();
+    std::fs::write(
+        new_dir.join("config.ini"),
+        "[section]\nkey=new\nport=8080\n",
+    )
+    .unwrap();
 
     // binary changed
     std::fs::create_dir_all(old_dir.join("sub")).unwrap();
@@ -84,7 +88,10 @@ fn test_format_size_kb() {
 #[test]
 fn test_format_size_mb() {
     assert_eq!(binary_patcher::utils::format_size(1024 * 1024), "1.00 MB");
-    assert_eq!(binary_patcher::utils::format_size(2 * 1024 * 1024), "2.00 MB");
+    assert_eq!(
+        binary_patcher::utils::format_size(2 * 1024 * 1024),
+        "2.00 MB"
+    );
 }
 
 #[test]
@@ -143,17 +150,13 @@ fn test_resolve_normal_path() {
 #[test]
 fn test_resolve_rejects_traversal() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(
-        binary_patcher::utils::resolve_safe_path(dir.path(), "../outside.txt").is_err()
-    );
+    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "../outside.txt").is_err());
 }
 
 #[test]
 fn test_resolve_deep_traversal() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(
-        binary_patcher::utils::resolve_safe_path(dir.path(), "sub/../../outside.txt").is_err()
-    );
+    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "sub/../../outside.txt").is_err());
 }
 
 // ===========================================================================
@@ -320,7 +323,13 @@ fn test_full_workflow() {
     build_workspace(&base_dir);
 
     // Generate bundle (with compression)
-    binary_patcher::bundle::build_patch_bundle(&base_dir, true, binary_patcher::cli::PatchMode::Memory, binary_patcher::cli::PatchFormat::Precise).unwrap();
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        true,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
 
     let patch_dir = base_dir.join("Patch");
     assert!(patch_dir.join("manifest.json").exists());
@@ -350,8 +359,14 @@ fn test_full_workflow() {
     assert_eq!(new_files, game_files);
 
     // Verify directories from Old that were deleted are gone
-    assert!(!game_dir.join("deep").exists(), "directory deep/ should have been removed");
-    assert!(!game_dir.join("deep/nested").exists(), "directory deep/nested/ should have been removed");
+    assert!(
+        !game_dir.join("deep").exists(),
+        "directory deep/ should have been removed"
+    );
+    assert!(
+        !game_dir.join("deep/nested").exists(),
+        "directory deep/nested/ should have been removed"
+    );
 
     // Rollback
     binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
@@ -366,9 +381,18 @@ fn test_full_workflow() {
     assert_eq!(old_files, game_files_after);
 
     // Verify deleted directories are recreated after rollback
-    assert!(game_dir.join("deep").is_dir(), "directory deep/ should be recreated after rollback");
-    assert!(game_dir.join("deep/nested").is_dir(), "directory deep/nested/ should be recreated after rollback");
-    assert!(game_dir.join("deep/nested/old_cache.tmp").exists(), "file deep/nested/old_cache.tmp should be restored after rollback");
+    assert!(
+        game_dir.join("deep").is_dir(),
+        "directory deep/ should be recreated after rollback"
+    );
+    assert!(
+        game_dir.join("deep/nested").is_dir(),
+        "directory deep/nested/ should be recreated after rollback"
+    );
+    assert!(
+        game_dir.join("deep/nested/old_cache.tmp").exists(),
+        "file deep/nested/old_cache.tmp should be restored after rollback"
+    );
 }
 
 // ===========================================================================
@@ -416,7 +440,8 @@ fn test_patch_format_fast_and_precise_both_work() {
     binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_fast, false, true).unwrap();
 
     // Create patch with precise format
-    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_precise, false, false).unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_precise, false, false)
+        .unwrap();
 
     // Apply fast patch
     let out_fast = dir.path().join("out_fast.bin");
@@ -437,7 +462,10 @@ fn test_patch_format_fast_and_precise_both_work() {
     if fast_size == precise_size {
         let fast_bytes = std::fs::read(&patch_fast).unwrap();
         let precise_bytes = std::fs::read(&patch_precise).unwrap();
-        assert_ne!(fast_bytes, precise_bytes, "Fast and precise patches should differ");
+        assert_ne!(
+            fast_bytes, precise_bytes,
+            "Fast and precise patches should differ"
+        );
     }
 }
 
@@ -456,7 +484,13 @@ fn test_stream_mode_workflow() {
     std::fs::write(base_dir.join("Old/file.txt"), "hello world old").unwrap();
     std::fs::write(base_dir.join("New/file.txt"), "hello world new").unwrap();
 
-    binary_patcher::bundle::build_patch_bundle(&base_dir, true, binary_patcher::cli::PatchMode::Stream, binary_patcher::cli::PatchFormat::Precise).unwrap();
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        true,
+        binary_patcher::cli::PatchMode::Stream,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
     assert!(base_dir.join("Patch/manifest.json").exists());
 
     let game_dir = base_dir.join("game");
@@ -465,14 +499,28 @@ fn test_stream_mode_workflow() {
 
     let game_patch = game_dir.join("Patch");
     std::fs::create_dir_all(&game_patch).unwrap();
-    std::fs::copy(base_dir.join("Patch/manifest.json"), game_patch.join("manifest.json")).unwrap();
-    std::fs::copy(base_dir.join("Patch/file.txt.patch"), game_patch.join("file.txt.patch")).unwrap();
+    std::fs::copy(
+        base_dir.join("Patch/manifest.json"),
+        game_patch.join("manifest.json"),
+    )
+    .unwrap();
+    std::fs::copy(
+        base_dir.join("Patch/file.txt.patch"),
+        game_patch.join("file.txt.patch"),
+    )
+    .unwrap();
 
     binary_patcher::apply::apply_bundle(&game_dir).unwrap();
-    assert_eq!(std::fs::read_to_string(game_dir.join("file.txt")).unwrap(), "hello world new");
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("file.txt")).unwrap(),
+        "hello world new"
+    );
 
     binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
-    assert_eq!(std::fs::read_to_string(game_dir.join("file.txt")).unwrap(), "hello world old");
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("file.txt")).unwrap(),
+        "hello world old"
+    );
 }
 
 // ===========================================================================
@@ -508,21 +556,42 @@ fn test_no_compress_workflow() {
     let base_dir = root.path().to_path_buf();
     std::fs::create_dir_all(base_dir.join("Old")).unwrap();
     std::fs::create_dir_all(base_dir.join("New")).unwrap();
-    std::fs::write(base_dir.join("Old/a.txt"), "old data that is long enough to diff").unwrap();
-    std::fs::write(base_dir.join("New/a.txt"), "new data that is long enough to diff").unwrap();
+    std::fs::write(
+        base_dir.join("Old/a.txt"),
+        "old data that is long enough to diff",
+    )
+    .unwrap();
+    std::fs::write(
+        base_dir.join("New/a.txt"),
+        "new data that is long enough to diff",
+    )
+    .unwrap();
 
-    binary_patcher::bundle::build_patch_bundle(&base_dir, false, binary_patcher::cli::PatchMode::Memory, binary_patcher::cli::PatchFormat::Precise).unwrap();
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        false,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
     assert!(base_dir.join("Patch/manifest.json").exists());
 
     let game_dir = base_dir.join("game");
     std::fs::create_dir_all(&game_dir).unwrap();
-    std::fs::write(game_dir.join("a.txt"), "old data that is long enough to diff").unwrap();
+    std::fs::write(
+        game_dir.join("a.txt"),
+        "old data that is long enough to diff",
+    )
+    .unwrap();
     let game_patch = game_dir.join("Patch");
     std::fs::create_dir_all(&game_patch).unwrap();
     copy_tree_files(&base_dir.join("Patch"), &game_patch);
 
     binary_patcher::apply::apply_bundle(&game_dir).unwrap();
-    assert_eq!(std::fs::read_to_string(game_dir.join("a.txt")).unwrap(), "new data that is long enough to diff");
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("a.txt")).unwrap(),
+        "new data that is long enough to diff"
+    );
 }
 
 // ===========================================================================
@@ -556,8 +625,12 @@ fn test_backup_retry_on_collision() {
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "original").unwrap();
 
-    let backup1 = binary_patcher::utils::write_backup(b"original", &target, dir.path(), &backup_root).unwrap();
-    let backup2 = binary_patcher::utils::write_backup(b"modified", &target, dir.path(), &backup_root).unwrap();
+    let backup1 =
+        binary_patcher::utils::write_backup(b"original", &target, dir.path(), &backup_root)
+            .unwrap();
+    let backup2 =
+        binary_patcher::utils::write_backup(b"modified", &target, dir.path(), &backup_root)
+            .unwrap();
     assert_ne!(backup1, backup2);
     assert!(backup2.to_string_lossy().contains(".backup_before_patch"));
     assert!(backup2.exists());
@@ -609,7 +682,8 @@ fn test_resolve_safe_path_rejects_traversal_in_load() {
     std::fs::write(
         dir.path().join("Patch/manifest.json"),
         serde_json::to_string_pretty(&manifest).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Verify manifest loads but resolve_safe_path catches the traversal during apply
     assert!(binary_patcher::manifest::Manifest::load(&dir.path().join("Patch")).is_ok());
@@ -636,6 +710,142 @@ fn test_apply_single_patch() {
         &old_path.to_string_lossy(),
         &patch_path.to_string_lossy(),
         &output_path.to_string_lossy(),
-    ).unwrap();
-    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "new content with extra data!");
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&output_path).unwrap(),
+        "new content with extra data!"
+    );
+}
+
+// ===========================================================================
+// Malformed JSON manifest
+// ===========================================================================
+
+#[test]
+fn test_manifest_malformed_json_truncated() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch_dir = dir.path().join("Patch");
+    std::fs::create_dir_all(&patch_dir).unwrap();
+    // Truncated JSON
+    std::fs::write(patch_dir.join("manifest.json"), "{\"format\": \"1.1.0\", ").unwrap();
+    assert!(binary_patcher::manifest::Manifest::load(&patch_dir).is_err());
+}
+
+#[test]
+fn test_manifest_malformed_json_not_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch_dir = dir.path().join("Patch");
+    std::fs::create_dir_all(&patch_dir).unwrap();
+    // JSON array is not a valid manifest
+    std::fs::write(patch_dir.join("manifest.json"), "[1, 2, 3]").unwrap();
+    assert!(binary_patcher::manifest::Manifest::load(&patch_dir).is_err());
+}
+
+#[test]
+fn test_manifest_malformed_json_random_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch_dir = dir.path().join("Patch");
+    std::fs::create_dir_all(&patch_dir).unwrap();
+    // Random binary garbage
+    std::fs::write(
+        patch_dir.join("manifest.json"),
+        vec![0xFF, 0xFE, 0x00, 0x01],
+    )
+    .unwrap();
+    assert!(binary_patcher::manifest::Manifest::load(&patch_dir).is_err());
+}
+
+// ===========================================================================
+// Version compat
+// ===========================================================================
+
+#[test]
+fn test_version_compat_major_mismatch() {
+    match binary_patcher::manifest::check_version_compat("2.0.0") {
+        binary_patcher::manifest::VersionCompat::Compatible => panic!("expected incompatible"),
+        binary_patcher::manifest::VersionCompat::Incompatible { .. } => {} // ok
+    }
+}
+
+#[test]
+fn test_version_compat_minor_mismatch() {
+    let current = env!("CARGO_PKG_VERSION");
+    let parts: Vec<&str> = current.split('.').collect();
+    let mismatched = format!(
+        "{}.{}.{}",
+        parts[0],
+        parts[1].parse::<u32>().unwrap() + 1,
+        0
+    );
+    match binary_patcher::manifest::check_version_compat(&mismatched) {
+        binary_patcher::manifest::VersionCompat::Compatible => panic!("expected incompatible"),
+        binary_patcher::manifest::VersionCompat::Incompatible { .. } => {} // ok
+    }
+}
+
+// ===========================================================================
+// format_size TB
+// ===========================================================================
+
+#[test]
+fn test_format_size_tb() {
+    assert_eq!(
+        binary_patcher::utils::format_size(1024u64 * 1024 * 1024 * 1024),
+        "1.00 TB"
+    );
+}
+
+// ===========================================================================
+// Rollback: empty directory cleanup
+// ===========================================================================
+
+#[test]
+fn test_rollback_cleanup_empty_dirs() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+
+    // Create Old/ with only one file (no extra subdirectory)
+    std::fs::create_dir_all(base_dir.join("Old")).unwrap();
+    std::fs::write(base_dir.join("Old/existing.txt"), "old content").unwrap();
+
+    // Create New/ with the same file + a new file in a new subdirectory
+    std::fs::create_dir_all(base_dir.join("New")).unwrap();
+    std::fs::write(base_dir.join("New/existing.txt"), "new content").unwrap();
+    std::fs::create_dir_all(base_dir.join("New/new_sub")).unwrap();
+    std::fs::write(base_dir.join("New/new_sub/added.txt"), "added file").unwrap();
+
+    // Bundle
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        true,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    // Simulate user directory
+    let game_dir = base_dir.join("game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    std::fs::write(game_dir.join("existing.txt"), "old content").unwrap();
+    // Copy Patch
+    let game_patch = game_dir.join("Patch");
+    std::fs::create_dir_all(&game_patch).unwrap();
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    // Apply
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    assert!(game_dir.join("new_sub/added.txt").exists());
+
+    // Rollback
+    // Feed "y" for backup deletion prompt and "y" for confirmation
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    // The added file should be gone
+    assert!(!game_dir.join("new_sub/added.txt").exists());
+    // The empty new_sub/ directory should be cleaned up
+    assert!(
+        !game_dir.join("new_sub").exists(),
+        "empty directory new_sub/ should be removed after rollback"
+    );
 }

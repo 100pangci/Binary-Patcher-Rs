@@ -1,6 +1,8 @@
-use std::path::Path;
+//! 补丁回滚逻辑：恢复备份文件 → 删除新增文件 → 清理空目录。
+
 use crate::manifest::Manifest;
-use crate::utils::{resolve_safe_path, restore_backup, display_path, backup_root_dir};
+use crate::utils::{backup_root_dir, display_path, resolve_safe_path, restore_backup};
+use std::path::Path;
 
 fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
     let base_abs = std::path::absolute(base_dir)?;
@@ -28,6 +30,7 @@ fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 回滚 Patch 补丁包：恢复变更/删除的备份，删除新增文件及空目录。
 pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
 
@@ -46,7 +49,12 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let added = &manifest.added;
     let deleted = &manifest.deleted;
 
-    println!("检测到可回滚内容: 变更 {}，新增 {}，删除 {}", changed.len(), added.len(), deleted.len());
+    println!(
+        "检测到可回滚内容: 变更 {}，新增 {}，删除 {}",
+        changed.len(),
+        added.len(),
+        deleted.len()
+    );
 
     let mut restored_count = 0u32;
     let mut removed_count = 0u32;
