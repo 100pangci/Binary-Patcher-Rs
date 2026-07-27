@@ -18,6 +18,22 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let manifest = Manifest::load(&patch_dir)?;
     let backup_root = backup_root_dir(&patch_dir);
 
+    match crate::manifest::check_version_compat(&manifest.format) {
+        crate::manifest::VersionCompat::Compatible => {}
+        crate::manifest::VersionCompat::Incompatible { manifest: mver, tool: tver } => {
+            eprintln!("警告: manifest 由 binary_patcher v{mver} 创建，");
+            eprintln!("      当前工具版本为 v{tver}，不保证完全兼容。");
+            print!("是否仍要应用补丁? [y/N]: ");
+            use std::io::Write;
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                anyhow::bail!("用户取消了补丁应用");
+            }
+        }
+    }
+
     let changed = &manifest.changed;
     let added = &manifest.added;
     let deleted = &manifest.deleted;

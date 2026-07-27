@@ -225,7 +225,7 @@ fn test_relative_dir_map_with_empty_dir() {
 #[test]
 fn test_valid_manifest() {
     let manifest = binary_patcher::manifest::Manifest {
-        format: 1,
+        format: "1.0.0".to_string(),
         source_root: "Old".to_string(),
         target_root: "New".to_string(),
         changed: vec![binary_patcher::manifest::ChangedEntry {
@@ -251,7 +251,7 @@ fn test_valid_manifest() {
 #[test]
 fn test_manifest_wrong_format() {
     let manifest = binary_patcher::manifest::Manifest {
-        format: 2,
+        format: "invalid".to_string(),
         source_root: "Old".to_string(),
         target_root: "New".to_string(),
         changed: vec![],
@@ -260,6 +260,18 @@ fn test_manifest_wrong_format() {
         deleted_dirs: vec![],
     };
     assert!(manifest.validate().is_err());
+
+    let manifest_v2 = binary_patcher::manifest::Manifest {
+        format: "2.0.0".to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    // v2.0.0 should pass validation (format is just a version string now)
+    assert!(manifest_v2.validate().is_ok());
 }
 
 // ===========================================================================

@@ -1,9 +1,12 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{self, Visitor};
+use std::fmt;
 use std::path::Path;
 
 pub const MANIFEST_NAME: &str = "manifest.json";
 pub const INSTRUCTIONS_NAME: &str = "README.txt";
 pub const WORKSPACE_DIRS: [&str; 3] = ["Old", "New", "Patch"];
+const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangedEntry {
@@ -27,9 +30,88 @@ pub struct DeletedEntry {
     pub old_sha256: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum VersionCompat {
+    /// 完全兼容（major.minor 相同）
+    Compatible,
+    /// 不兼容（major 或 minor 不同）
+    Incompatible { manifest: String, tool: String },
+}
+
+fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() == 3 {
+        Some((parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?))
+    } else if parts.len() == 1 {
+        // Legacy: "1" → (1, 0, 0)
+        Some((parts[0].parse().ok()?, 0, 0))
+    } else {
+        None
+    }
+}
+
+pub fn check_version_compat(manifest_version: &str) -> VersionCompat {
+    let manifest_ver = match parse_semver(manifest_version) {
+        Some(v) => v,
+        None => return VersionCompat::Incompatible {
+            manifest: manifest_version.to_string(),
+            tool: PACKAGE_VERSION.to_string(),
+        },
+    };
+    let tool_ver = match parse_semver(PACKAGE_VERSION) {
+        Some(v) => v,
+        None => return VersionCompat::Incompatible {
+            manifest: manifest_version.to_string(),
+            tool: PACKAGE_VERSION.to_string(),
+        },
+    };
+    if manifest_ver.0 == tool_ver.0 && manifest_ver.1 == tool_ver.1 {
+        VersionCompat::Compatible
+    } else {
+        VersionCompat::Incompatible {
+            manifest: manifest_version.to_string(),
+            tool: PACKAGE_VERSION.to_string(),
+        }
+    }
+}
+
+fn deserialize_format<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FormatVisitor;
+    impl<'de> Visitor<'de> for FormatVisitor {
+        type Value = String;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a semver string like \"1.1.0\" or an integer like 1")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<String, E> {
+            Ok(format!("{v}.0.0"))
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<String, E> {
+            Ok(format!("{v}.0.0"))
+        }
+    }
+    deserializer.deserialize_any(FormatVisitor)
+}
+
+fn serialize_format<S>(format: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(format)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
-    pub format: u32,
+    #[serde(
+        deserialize_with = "deserialize_format",
+        serialize_with = "serialize_format"
+    )]
+    pub format: String,
     pub source_root: String,
     pub target_root: String,
     pub changed: Vec<ChangedEntry>,
@@ -46,7 +128,7 @@ fn is_valid_sha256(s: &str) -> bool {
 impl Default for Manifest {
     fn default() -> Self {
         Self {
-            format: 1,
+            format: PACKAGE_VERSION.to_string(),
             source_root: "Old".to_string(),
             target_root: "New".to_string(),
             changed: Vec::new(),
@@ -59,8 +141,8 @@ impl Default for Manifest {
 
 impl Manifest {
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.format != 1 {
-            anyhow::bail!("不支持的 manifest 格式版本: {}。当前工具仅支持格式版本 1。", self.format);
+        if parse_semver(&self.format).is_none() {
+            anyhow::bail!("manifest format 版本格式无效: {}", self.format);
         }
 
         for (idx, item) in self.changed.iter().enumerate() {
