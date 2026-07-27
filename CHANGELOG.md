@@ -43,3 +43,83 @@
 - 补丁应用失败自动回滚 + SHA256 校验
 - 备份文件不覆盖：`create_new(true)` + 时间戳重试
 - C 堆内存安全释放：空指针/零长度双重检查
+
+## [v1.1.0] — 2026-07-27
+
+### Added
+- `--format fast` (v2 hash-based diff) 快速差分算法
+- `--mode auto/stream/memory` 三种补丁创建模式（替代 `--stream` 标志）
+- 多线程补丁应用，失败自动降级单线程
+- 备份文件集中到 `Patch/.backup_before_patch/` 目录
+- 三语 README（中文 / English / 日本語）
+
+### Changed
+- 差分线程上限提升至 32
+- 运行时安全检查默认关闭（性能收益 15-20%）
+- `build.rs` 版本缓存机制，缓存 HDiffPatch 最新版本号
+- 升级 HDiffPatch 依赖版本自动检测（GitHub API + HTML 回退）
+
+### Fixed
+- Linux/macOS 跨平台兼容性
+- 构建脚本 API 限流回退机制
+
+## [v1.0.8] — 2026-07-27
+
+### Added
+- `--format fast` (v2 hash-based diff) 作为快速差分算法
+
+### Changed
+- 差分线程上限从 5 提升至 32
+- 运行时安全检查默认关闭
+
+## [v1.0.7] — 2026-07-27
+
+### Added
+- `--mode auto/stream/memory` 三种模式（替代 `--stream`）
+
+### Changed
+- 文档同步更新三语 README
+
+## [v1.0.6] — 2026-07-27
+
+### Changed
+- SHA256 实现从 `sha2` 更换为 `ring`（汇编优化，~2x 速度提升）
+- 流式模式支持：`--stream` 标志，大文件低内存处理
+- 单次文件读取（SHA256 + 差分合并）
+
+### Fixed
+- CI 中 Linux 编译依赖（build-essential, nasm）
+
+## [v1.0.5] — 2026-07-27
+
+同 v1.0.1。
+
+## [v1.0.2] — 2026-07-27
+
+### Added
+- `--no-compress` 标志，禁用 zlib 补丁压缩
+- zlib 压缩支持（HDiffPatch 补丁引擎）
+- CI/CD：tag 触发自动构建 + GitHub Release
+
+### Fixed
+- CI 重复触发问题
+
+## [v1.0.1] — 2026-07-27
+
+### Added
+- 多线程补丁应用（失败自动降级单线程）
+- 流式回退模式（内存不足时自动降级文件流）
+- 错误诊断信息改进
+- 构建脚本自动下载 HDiffPatch 和 zlib，零手动依赖
+- 三平台构建支持（Windows / Linux / macOS）
+- 端到端冒烟测试脚本 `e2e.ps1`
+- 测试数据生成脚本 `scripts/gen_test_data.ps1`
+
+### Changed
+- 补丁引擎从 bsdiff 迁移至 HDiffPatch（FFI 静态链接 C/C++ 库）
+- Rust 完整重写，替代原 Python 版本
+- 构建脚本版本缓存机制 + HTML scraping 回退
+
+### Fixed
+- SHA256 缓冲区栈溢出（1MB 改为堆分配）
+- 跨平台测试兼容性
