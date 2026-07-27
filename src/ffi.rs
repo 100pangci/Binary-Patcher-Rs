@@ -34,7 +34,48 @@ unsafe extern "C" {
         thread_num: i32,
     ) -> i32;
 
+    fn hdiffpatch_apply_file(
+        old_file: *const c_char,
+        patch_data: *const u8,
+        patch_size: usize,
+        output_file: *const c_char,
+        thread_num: i32,
+    ) -> i32;
+
     fn hdiffpatch_free(ptr: *mut c_void);
+}
+
+#[derive(Debug, Clone)]
+pub struct PatchError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl PatchError {
+    pub fn is_oom(&self) -> bool {
+        self.code == -8
+    }
+}
+
+impl std::fmt::Display for PatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (错误码: {})", self.message, self.code)
+    }
+}
+
+fn error_msg(code: i32) -> String {
+    match code {
+        -8 => "内存不足，无法分配补丁缓冲区",
+        -1 => "创建补丁失败、补丁格式不兼容或内部异常",
+        -2 => "内存不足，无法分配输出缓冲区",
+        -3 => "应用补丁执行失败",
+        -4 => "应用补丁时发生内部异常",
+        -5 => "无法打开旧文件",
+        -6 => "无法打开新文件",
+        -7 => "无法创建输出文件",
+        _ => "未知错误",
+    }
+    .to_string()
 }
 
 pub fn create_patch(
@@ -43,7 +84,7 @@ pub fn create_patch(
     thread_num: u32,
     use_compression: bool,
     fast_format: bool,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, PatchError> {
     let mut out_patch: *mut u8 = null_mut();
     let mut out_patch_size: usize = 0;
 
@@ -65,20 +106,18 @@ pub fn create_patch(
         if !out_patch.is_null() {
             unsafe { hdiffpatch_free(out_patch as *mut c_void); }
         }
-        let msg = match ret {
-            -8 => "内存不足，无法分配补丁缓冲区",
-            -1 => "创建补丁失败或内部异常",
-            _ => "创建补丁失败",
-        };
-        return Err(format!("{msg} (错误码: {ret})"));
+        return Err(PatchError {
+            code: ret,
+            message: error_msg(ret),
+        });
     }
 
-    let patch = unsafe {
-        std::slice::from_raw_parts(out_patch, out_patch_size).to_vec()
-    };
+    if out_patch_size == 0 {
+        return Ok(Vec::new());
+    }
 
+    let patch = unsafe { std::slice::from_raw_parts(out_patch, out_patch_size).to_vec() };
     unsafe { hdiffpatch_free(out_patch as *mut c_void); }
-
     Ok(patch)
 }
 
@@ -89,10 +128,19 @@ pub fn create_patch_file(
     thread_num: u32,
     use_compression: bool,
     fast_format: bool,
-) -> Result<(), String> {
-    let old_c = std::ffi::CString::new(old_file).map_err(|e| format!("无效路径: {e}"))?;
-    let new_c = std::ffi::CString::new(new_file).map_err(|e| format!("无效路径: {e}"))?;
-    let patch_c = std::ffi::CString::new(patch_file).map_err(|e| format!("无效路径: {e}"))?;
+) -> Result<(), PatchError> {
+    let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
+        code: -1,
+        message: format!("无效路径: {e}"),
+    })?;
+    let new_c = std::ffi::CString::new(new_file).map_err(|e| PatchError {
+        code: -1,
+        message: format!("无效路径: {e}"),
+    })?;
+    let patch_c = std::ffi::CString::new(patch_file).map_err(|e| PatchError {
+        code: -1,
+        message: format!("无效路径: {e}"),
+    })?;
 
     let ret = unsafe {
         hdiffpatch_create_file(
@@ -106,14 +154,10 @@ pub fn create_patch_file(
     };
 
     if ret != 0 {
-        let msg = match ret {
-            -1 => "创建补丁失败或内部异常",
-            -5 => "无法打开旧文件",
-            -6 => "无法打开新文件",
-            -7 => "无法创建补丁文件",
-            _ => "创建补丁失败",
-        };
-        return Err(format!("{msg} (错误码: {ret})"));
+        return Err(PatchError {
+            code: ret,
+            message: error_msg(ret),
+        });
     }
 
     Ok(())
@@ -123,7 +167,7 @@ pub fn apply_patch(
     old_data: &[u8],
     patch_data: &[u8],
     thread_num: u32,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, PatchError> {
     let mut out_new_data: *mut u8 = null_mut();
     let mut out_new_size: usize = 0;
 
@@ -143,21 +187,52 @@ pub fn apply_patch(
         if !out_new_data.is_null() {
             unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
         }
-        let msg = match ret {
-            -1 => "无法解析补丁文件头部信息（补丁格式不兼容或文件损坏）",
-            -2 => "内存不足，无法分配输出缓冲区",
-            -3 => "应用补丁执行失败",
-            -4 => "应用补丁时发生内部异常",
-            _ => "应用补丁失败",
-        };
-        return Err(format!("{msg} (错误码: {ret})"));
+        return Err(PatchError {
+            code: ret,
+            message: error_msg(ret),
+        });
     }
 
-    let new_data = unsafe {
-        std::slice::from_raw_parts(out_new_data, out_new_size).to_vec()
+    if out_new_size == 0 {
+        return Ok(Vec::new());
+    }
+
+    let new_data = unsafe { std::slice::from_raw_parts(out_new_data, out_new_size).to_vec() };
+    unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+    Ok(new_data)
+}
+
+pub fn apply_patch_file(
+    old_file: &str,
+    patch_data: &[u8],
+    output_file: &str,
+    thread_num: u32,
+) -> Result<(), PatchError> {
+    let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
+        code: -1,
+        message: format!("无效路径: {e}"),
+    })?;
+    let output_c = std::ffi::CString::new(output_file).map_err(|e| PatchError {
+        code: -1,
+        message: format!("无效路径: {e}"),
+    })?;
+
+    let ret = unsafe {
+        hdiffpatch_apply_file(
+            old_c.as_ptr(),
+            patch_data.as_ptr(),
+            patch_data.len(),
+            output_c.as_ptr(),
+            thread_num as i32,
+        )
     };
 
-    unsafe { hdiffpatch_free(out_new_data as *mut c_void); }
+    if ret != 0 {
+        return Err(PatchError {
+            code: ret,
+            message: error_msg(ret),
+        });
+    }
 
-    Ok(new_data)
+    Ok(())
 }

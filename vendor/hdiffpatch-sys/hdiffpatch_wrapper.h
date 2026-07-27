@@ -32,6 +32,13 @@ int hdiffpatch_apply(
     int thread_num
 );
 
+int hdiffpatch_apply_file(
+    const char* old_file,
+    const unsigned char* patch_data, size_t patch_size,
+    const char* output_file,
+    int thread_num
+);
+
 void hdiffpatch_free(void* ptr);
 
 #ifdef __cplusplus

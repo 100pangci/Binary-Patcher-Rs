@@ -80,14 +80,14 @@ pub fn relative_dir_map(base_dir: &Path) -> std::collections::BTreeMap<String, P
     let mut dirs = std::collections::BTreeMap::new();
     let base = base_dir.to_path_buf();
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_dir() {
-            if let Ok(rel) = entry.path().strip_prefix(&base) {
+        if entry.file_type().is_dir()
+            && let Ok(rel) = entry.path().strip_prefix(&base)
+        {
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
                 if !rel_str.is_empty() {
                     dirs.insert(rel_str, entry.path().to_path_buf());
                 }
             }
-        }
     }
     dirs
 }
@@ -153,7 +153,7 @@ pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) ->
         .unwrap_or(Path::new(""));
 
     let backup_dir = backup_root.join(rel);
-    ensure_parent_dir(&backup_dir.join(&file_name))?;
+    ensure_parent_dir(&backup_dir.join(file_name))?;
 
     let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
     let mut backup_path = backup_dir.join(&backup_name);

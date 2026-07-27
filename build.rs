@@ -35,6 +35,15 @@ fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
         }
     }
     println!("cargo:warning=zlib {version} extracted to {}", zlib_dir.display());
+
+    // Integrity check: verify zlib.h exists and contains ZLIB_VERSION
+    let zlib_h = zlib_dir.join("zlib.h");
+    let content = std::fs::read_to_string(&zlib_h)
+        .unwrap_or_else(|e| panic!("zlib integrity check: cannot read zlib.h: {e}"));
+    if !content.contains("ZLIB_VERSION") {
+        panic!("zlib integrity check failed: zlib.h missing ZLIB_VERSION");
+    }
+
     zlib_dir
 }
 
@@ -173,10 +182,10 @@ fn get_latest_tag(cache_dir: &Path) -> String {
     println!("cargo:warning=Fetching latest HDiffPatch release from GitHub API...");
     let mut tag_name: Option<String> = None;
 
-    if let Ok(resp) = client.get(HDIFFPATCH_REPO_API).send() {
-        if let Ok(release) = resp.json::<serde_json::Value>() {
-            tag_name = release["tag_name"].as_str().map(|s| s.to_string());
-        }
+    if let Ok(resp) = client.get(HDIFFPATCH_REPO_API).send()
+        && let Ok(release) = resp.json::<serde_json::Value>()
+    {
+        tag_name = release["tag_name"].as_str().map(|s| s.to_string());
     }
 
     // Fallback: scrape the releases page HTML for the latest tag
@@ -185,18 +194,17 @@ fn get_latest_tag(cache_dir: &Path) -> String {
         if let Ok(resp) = client
             .get("https://github.com/sisong/HDiffPatch/releases/latest")
             .send()
+            && let Ok(html) = resp.text()
         {
-            if let Ok(html) = resp.text() {
-                // Look for /sisong/HDiffPatch/releases/tag/vX.Y.Z in the HTML
-                for line in html.lines() {
-                    if let Some(start) = line.find("/sisong/HDiffPatch/releases/tag/v") {
-                        let rest = &line[start..];
-                        if let Some(end) = rest.find('"') {
-                            let tag = rest[..end].rsplit('/').next().unwrap_or("");
-                            if !tag.is_empty() {
-                                tag_name = Some(tag.to_string());
-                                break;
-                            }
+            // Look for /sisong/HDiffPatch/releases/tag/vX.Y.Z in the HTML
+            for line in html.lines() {
+                if let Some(start) = line.find("/sisong/HDiffPatch/releases/tag/v") {
+                    let rest = &line[start..];
+                    if let Some(end) = rest.find('"') {
+                        let tag = rest[..end].rsplit('/').next().unwrap_or("");
+                        if !tag.is_empty() {
+                            tag_name = Some(tag.to_string());
+                            break;
                         }
                     }
                 }

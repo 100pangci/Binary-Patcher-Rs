@@ -41,6 +41,12 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for Manifest {
+    fn default() -> Self {
         Self {
             format: 1,
             source_root: "Old".to_string(),
@@ -51,7 +57,9 @@ impl Manifest {
             deleted_dirs: Vec::new(),
         }
     }
+}
 
+impl Manifest {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.format != 1 {
             anyhow::bail!("不支持的 manifest 格式版本: {}。当前工具仅支持格式版本 1。", self.format);

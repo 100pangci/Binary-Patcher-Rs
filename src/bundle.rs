@@ -38,73 +38,63 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
 
         match (old_path, new_path) {
             (Some(old), Some(new)) => {
-                let (old_hash, new_hash);
                 let patch_output = patch_dir.join(format!("{relative_path}.patch"));
 
                 match mode {
                     PatchMode::Stream => {
-                        old_hash = sha256_of_file(old)?;
-                        new_hash = sha256_of_file(new)?;
+                        let old_hash = sha256_of_file(old)?;
+                        let new_hash = sha256_of_file(new)?;
                         if old_hash == new_hash { continue; }
                         println!("[变更] {relative_path}");
                         create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
+                        manifest.changed.push(ChangedEntry {
+                            path: relative_path.clone(),
+                            old_sha256: old_hash,
+                            new_sha256: new_hash,
+                            patch_file: format!("{relative_path}.patch"),
+                        });
                     }
                     PatchMode::Memory => {
                         let old_data = std::fs::read(old)
                             .map_err(|e| anyhow::anyhow!("读取旧文件失败 {}: {e}", old.display()))?;
                         let new_data = std::fs::read(new)
                             .map_err(|e| anyhow::anyhow!("读取新文件失败 {}: {e}", new.display()))?;
-                        old_hash = sha256_of_bytes(&old_data);
-                        new_hash = sha256_of_bytes(&new_data);
+                        let old_hash = sha256_of_bytes(&old_data);
+                        let new_hash = sha256_of_bytes(&new_data);
                         if old_hash == new_hash { continue; }
                         println!("[变更] {relative_path}");
                         create_patch_mem(&old_data, &new_data, &patch_output, use_compression, fast_format)?;
+                        manifest.changed.push(ChangedEntry {
+                            path: relative_path.clone(),
+                            old_sha256: old_hash,
+                            new_sha256: new_hash,
+                            patch_file: format!("{relative_path}.patch"),
+                        });
                     }
                     PatchMode::Auto => {
-                        // Try memory first (best patch quality + single file read)
-                        let try_mem = (|| -> anyhow::Result<(String, String, Vec<u8>, Vec<u8>)> {
-                            let old_data = std::fs::read(old)
-                                .map_err(|e| anyhow::anyhow!("读取旧文件 {}: {e}", old.display()))?;
-                            let new_data = std::fs::read(new)
-                                .map_err(|e| anyhow::anyhow!("读取新文件 {}: {e}", new.display()))?;
-                            let oh = sha256_of_bytes(&old_data);
-                            let nh = sha256_of_bytes(&new_data);
-                            Ok((oh, nh, old_data, new_data))
-                        })();
-
-                        match try_mem {
-                            Ok((oh, nh, old_data, new_data)) => {
-                                if oh == nh { continue; }
-                                old_hash = oh;
-                                new_hash = nh;
-                                println!("[变更] {relative_path}");
-                                create_patch_mem(&old_data, &new_data, &patch_output, use_compression, fast_format)?;
-                            }
-                            Err(e) => {
-                                let msg = e.to_string();
+                        let (old_hash, new_hash) = match try_mem_patch(old, new, &patch_output, use_compression, fast_format) {
+                            Ok((oh, nh)) => (oh, nh),
+                            Err(_first_err) => {
                                 let old_sz = std::fs::metadata(old).map(|m| m.len()).unwrap_or(0);
                                 let new_sz = std::fs::metadata(new).map(|m| m.len()).unwrap_or(0);
                                 let total_gb = (old_sz + new_sz) as f64 / (1u64 << 30) as f64;
-                                if msg.contains("内存") || msg.contains("memory") || msg.contains("OOM") {
-                                    eprintln!("注意: 内存不足（{:.1}GB），自动切换为流式模式", total_gb);
-                                    old_hash = sha256_of_file(old)?;
-                                    new_hash = sha256_of_file(new)?;
-                                    if old_hash == new_hash { continue; }
-                                    println!("[变更] {relative_path}");
-                        create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
-                                } else {
-                                    return Err(e);
-                                }
+                                eprintln!("注意: 内存不足（{:.1}GB），自动切换为流式模式", total_gb);
+                                let oh = sha256_of_file(old)?;
+                                let nh = sha256_of_file(new)?;
+                                if oh == nh { continue; }
+                                println!("[变更] {relative_path}");
+                                create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
+                                (oh, nh)
                             }
-                        }
+                        };
+                        manifest.changed.push(ChangedEntry {
+                            path: relative_path.clone(),
+                            old_sha256: old_hash,
+                            new_sha256: new_hash,
+                            patch_file: format!("{relative_path}.patch"),
+                        });
                     }
                 }
-                manifest.changed.push(ChangedEntry {
-                    path: relative_path.clone(),
-                    old_sha256: old_hash,
-                    new_sha256: new_hash,
-                    patch_file: format!("{relative_path}.patch"),
-                });
                 changed_count += 1;
             }
             (None, Some(new)) => {
@@ -133,17 +123,15 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
         }
     }
 
-    // Scan for directories that exist in Old but not in New
     let old_dirs = relative_dir_map(&old_dir);
     let new_dirs = relative_dir_map(&new_dir);
-    for (rel_path, _) in &old_dirs {
+    for rel_path in old_dirs.keys() {
         if !new_dirs.contains_key(rel_path) {
             manifest.deleted_dirs.push(rel_path.clone());
             println!("[删除目录] {rel_path}");
             deleted_dirs_count += 1;
         }
     }
-    // Sort deepest-first for deletion order at apply time
     manifest.deleted_dirs.sort_by(|a, b| b.len().cmp(&a.len()).then(b.cmp(a)));
 
     manifest.save(&patch_dir)?;
@@ -159,13 +147,46 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     Ok(())
 }
 
+fn try_mem_patch(
+    old: &Path,
+    new: &Path,
+    patch_output: &Path,
+    use_compression: bool,
+    fast_format: bool,
+) -> Result<(String, String), crate::ffi::PatchError> {
+    let old_data = std::fs::read(old)
+        .map_err(|e| crate::ffi::PatchError {
+            code: -1,
+            message: format!("读取旧文件失败 {}: {e}", old.display()),
+        })?;
+    let new_data = std::fs::read(new)
+        .map_err(|e| crate::ffi::PatchError {
+            code: -1,
+            message: format!("读取新文件失败 {}: {e}", new.display()),
+        })?;
+    let old_hash = sha256_of_bytes(&old_data);
+    let new_hash = sha256_of_bytes(&new_data);
+    run_hdiffz_mem(&old_data, &new_data, patch_output, get_diff_thread_count(), use_compression, fast_format)?;
+
+    let patch_size = std::fs::metadata(patch_output)
+        .map_err(|e| crate::ffi::PatchError { code: -1, message: format!("无法读取补丁文件: {e}") })?
+        .len();
+    println!("  补丁创建成功！");
+    println!("    - 旧文件大小: {}", format_size(old_data.len() as u64));
+    println!("    - 新文件大小: {}", format_size(new_data.len() as u64));
+    println!("    - 补丁文件大小: {}", format_size(patch_size));
+
+    Ok((old_hash, new_hash))
+}
+
 fn create_patch_mem(old_data: &[u8], new_data: &[u8], patch_file: &Path, use_compression: bool, fast_format: bool) -> anyhow::Result<()> {
     ensure_parent_dir(patch_file)?;
     let old_size = old_data.len();
     let new_size = new_data.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_diff_thread_count(), use_compression, fast_format)?;
+    let thread_count = run_hdiffz_mem(old_data, new_data, patch_file, get_diff_thread_count(), use_compression, fast_format)
+        .map_err(|e| anyhow::anyhow!("创建补丁失败: {e}"))?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));
@@ -185,7 +206,8 @@ fn create_patch_stream(old_file: &Path, new_file: &Path, patch_file: &Path, use_
     let new_size = std::fs::metadata(new_file)?.len();
 
     println!("  正在调用 HDiffPatch 生成补丁...");
-    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_diff_thread_count(), use_compression, fast_format)?;
+    let thread_count = run_hdiffz_stream(old_file, new_file, patch_file, get_diff_thread_count(), use_compression, fast_format)
+        .map_err(|e| anyhow::anyhow!("创建补丁失败: {e}"))?;
     let patch_size = std::fs::metadata(patch_file)?.len();
 
     println!("  {}", "-".repeat(30));
