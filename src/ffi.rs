@@ -1,16 +1,13 @@
-//! HDiffPatch C 库的 FFI 绑定。封装不安全 C 函数调用，提供类型安全的 Rust 接口。
-
+use crate::t;
 use std::ffi::c_void;
 use std::os::raw::c_char;
 use std::ptr::null_mut;
+use std::sync::Mutex;
+
+/// Serialize access to HDiffPatch C library which is not thread-safe.
+static FFI_LOCK: Mutex<()> = Mutex::new(());
 
 unsafe extern "C" {
-    /// 创建内存补丁。
-    /// # Safety
-    /// - `old_data` / `new_data` 必须指向有效内存区域，长度分别等于 `old_size` / `new_size`。
-    /// - `out_patch` / `out_patch_size` 必须是有效非空指针。
-    /// - 成功时 `*out_patch` 被设置为需要调用 `hdiffpatch_free` 释放的堆内存。
-    /// - **非线程安全**：HDiffPatch C 库内部可能使用全局状态，不应在多线程中同时调用。
     fn hdiffpatch_create(
         old_data: *const u8,
         old_size: usize,
@@ -23,10 +20,6 @@ unsafe extern "C" {
         fast_format: i32,
     ) -> i32;
 
-    /// 使用文件路径创建补丁。
-    /// # Safety
-    /// - `old_file` / `new_file` / `patch_file` 必须是以 null 结尾的有效 C 字符串。
-    /// - **非线程安全**：不应在多线程中同时调用。
     fn hdiffpatch_create_file(
         old_file: *const c_char,
         new_file: *const c_char,
@@ -36,12 +29,6 @@ unsafe extern "C" {
         fast_format: i32,
     ) -> i32;
 
-    /// 应用内存补丁。
-    /// # Safety
-    /// - `old_data` / `patch_data` 必须指向有效内存区域，长度分别等于 `old_size` / `patch_size`。
-    /// - `out_new_data` / `out_new_size` 必须是有效非空指针。
-    /// - 成功时 `*out_new_data` 被设置为需要调用 `hdiffpatch_free` 释放的堆内存。
-    /// - **非线程安全**：不应在多线程中同时调用。
     fn hdiffpatch_apply(
         old_data: *const u8,
         old_size: usize,
@@ -52,11 +39,6 @@ unsafe extern "C" {
         thread_num: i32,
     ) -> i32;
 
-    /// 应用补丁到文件。
-    /// # Safety
-    /// - `old_file` / `output_file` 必须是以 null 结尾的有效 C 字符串。
-    /// - `patch_data` 必须指向有效内存区域，长度等于 `patch_size`。
-    /// - **非线程安全**：不应在多线程中同时调用。
     fn hdiffpatch_apply_file(
         old_file: *const c_char,
         patch_data: *const u8,
@@ -65,23 +47,16 @@ unsafe extern "C" {
         thread_num: i32,
     ) -> i32;
 
-    /// 释放由 hdiffpatch 函数分配的堆内存。
-    /// # Safety
-    /// - `ptr` 必须是之前由 `hdiffpatch_create` 或 `hdiffpatch_apply` 分配的指针。
     fn hdiffpatch_free(ptr: *mut c_void);
 }
 
-/// HDiffPatch C 库返回的错误。
 #[derive(Debug, Clone)]
 pub struct PatchError {
-    /// 错误码（-8 OOM，-1~-7 具体错误）。
     pub code: i32,
-    /// 人类可读的错误描述。
     pub message: String,
 }
 
 impl PatchError {
-    /// 错误码是否为 OOM（-8）。
     pub fn is_oom(&self) -> bool {
         self.code == -8
     }
@@ -89,37 +64,26 @@ impl PatchError {
 
 impl std::fmt::Display for PatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (错误码: {})", self.message, self.code)
+        write!(f, "{} (code: {})", self.message, self.code)
     }
 }
 
 impl std::error::Error for PatchError {}
 
-impl From<std::io::Error> for PatchError {
-    fn from(e: std::io::Error) -> Self {
-        PatchError {
-            code: -1,
-            message: e.to_string(),
-        }
-    }
-}
-
 fn error_msg(code: i32) -> String {
     match code {
-        -8 => "内存不足，无法分配补丁缓冲区",
-        -1 => "创建补丁失败、补丁格式不兼容或内部异常",
-        -2 => "内存不足，无法分配输出缓冲区",
-        -3 => "应用补丁执行失败",
-        -4 => "应用补丁时发生内部异常",
-        -5 => "无法打开旧文件",
-        -6 => "无法打开新文件",
-        -7 => "无法创建输出文件",
-        _ => "未知错误",
+        -8 => t!("ffi.oom"),
+        -1 => t!("ffi.create-failed"),
+        -2 => t!("ffi.alloc-failed"),
+        -3 => t!("ffi.apply-failed"),
+        -4 => t!("ffi.apply-exception"),
+        -5 => t!("ffi.cant-open-old"),
+        -6 => t!("ffi.cant-open-new"),
+        -7 => t!("ffi.cant-create-output"),
+        _ => t!("ffi.unknown-error"),
     }
-    .to_string()
 }
 
-/// 全内存创建补丁：读取 old_data → new_data 的差异，返回补丁字节。
 pub fn create_patch(
     old_data: &[u8],
     new_data: &[u8],
@@ -127,6 +91,11 @@ pub fn create_patch(
     use_compression: bool,
     fast_format: bool,
 ) -> Result<Vec<u8>, PatchError> {
+    let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
+        code: -1,
+        message: "FFI mutex poisoned".to_string(),
+    })?;
+
     let mut out_patch: *mut u8 = null_mut();
     let mut out_patch_size: usize = 0;
 
@@ -160,7 +129,7 @@ pub fn create_patch(
     if out_patch.is_null() && out_patch_size > 0 {
         return Err(PatchError {
             code: -1,
-            message: "内部错误: C 库返回了空指针但声明了非零长度".into(),
+            message: t!("ffi.null-ptr"),
         });
     }
 
@@ -180,7 +149,6 @@ pub fn create_patch(
     Ok(patch)
 }
 
-/// 流式创建补丁：直接从文件读取并输出补丁，低内存占用。
 pub fn create_patch_file(
     old_file: &str,
     new_file: &str,
@@ -189,17 +157,22 @@ pub fn create_patch_file(
     use_compression: bool,
     fast_format: bool,
 ) -> Result<(), PatchError> {
+    let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
+        code: -1,
+        message: "FFI mutex poisoned".to_string(),
+    })?;
+
     let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
         code: -1,
-        message: format!("无效路径: {e}"),
+        message: t!("ffi.invalid-path", e),
     })?;
     let new_c = std::ffi::CString::new(new_file).map_err(|e| PatchError {
         code: -1,
-        message: format!("无效路径: {e}"),
+        message: t!("ffi.invalid-path", e),
     })?;
     let patch_c = std::ffi::CString::new(patch_file).map_err(|e| PatchError {
         code: -1,
-        message: format!("无效路径: {e}"),
+        message: t!("ffi.invalid-path", e),
     })?;
 
     let thread_num_i32 = i32::try_from(thread_num).unwrap_or(i32::MAX);
@@ -224,12 +197,16 @@ pub fn create_patch_file(
     Ok(())
 }
 
-/// 全内存应用补丁：将 patch 应用到 old_data，返回新数据。
 pub fn apply_patch(
     old_data: &[u8],
     patch_data: &[u8],
     thread_num: u32,
 ) -> Result<Vec<u8>, PatchError> {
+    let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
+        code: -1,
+        message: "FFI mutex poisoned".to_string(),
+    })?;
+
     let mut out_new_data: *mut u8 = null_mut();
     let mut out_new_size: usize = 0;
 
@@ -261,7 +238,7 @@ pub fn apply_patch(
     if out_new_data.is_null() && out_new_size > 0 {
         return Err(PatchError {
             code: -1,
-            message: "内部错误: C 库返回了空指针但声明了非零长度".into(),
+            message: t!("ffi.null-ptr"),
         });
     }
 
@@ -281,20 +258,24 @@ pub fn apply_patch(
     Ok(new_data)
 }
 
-/// 流式应用补丁：从 old_file 读取，将 patch 应用到 output_file，低内存。
 pub fn apply_patch_file(
     old_file: &str,
     patch_data: &[u8],
     output_file: &str,
     thread_num: u32,
 ) -> Result<(), PatchError> {
+    let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
+        code: -1,
+        message: "FFI mutex poisoned".to_string(),
+    })?;
+
     let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
         code: -1,
-        message: format!("无效路径: {e}"),
+        message: t!("ffi.invalid-path", e),
     })?;
     let output_c = std::ffi::CString::new(output_file).map_err(|e| PatchError {
         code: -1,
-        message: format!("无效路径: {e}"),
+        message: t!("ffi.invalid-path", e),
     })?;
 
     let thread_num_i32 = i32::try_from(thread_num).unwrap_or(i32::MAX);

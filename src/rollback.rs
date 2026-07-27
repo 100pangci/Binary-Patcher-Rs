@@ -1,7 +1,7 @@
-//! 补丁回滚逻辑：恢复备份文件 → 删除新增文件 → 清理空目录。
-
+use crate::backup::{backup_root_dir, restore_backup};
 use crate::manifest::Manifest;
-use crate::utils::{backup_root_dir, display_path, resolve_safe_path, restore_backup};
+use crate::path::{display_path, resolve_safe_path};
+use crate::t;
 use std::path::Path;
 
 fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
@@ -15,7 +15,7 @@ fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
             let has_entries = current.read_dir()?.next().is_some();
             if !has_entries {
                 std::fs::remove_dir(&current)?;
-                println!("  清理空目录: {}", display_path(&current, base_dir));
+                println!("{}", t!("rollback.removed-empty-dir", display_path(&current, base_dir)));
             } else {
                 break;
             }
@@ -30,16 +30,11 @@ fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 回滚 Patch 补丁包：恢复变更/删除的备份，删除新增文件及空目录。
 pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
 
     if !patch_dir.exists() {
-        anyhow::bail!(
-            "当前目录下未找到 Patch 文件夹: {}\n\
-             请把 Patch 文件夹复制到旧版本根目录后，再运行 rollback_patch。",
-            patch_dir.display()
-        );
+        anyhow::bail!("{}", t!("rollback.no-patch-dir", patch_dir.display()));
     }
 
     let manifest = Manifest::load(&patch_dir)?;
@@ -49,55 +44,49 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let added = &manifest.added;
     let deleted = &manifest.deleted;
 
-    println!(
-        "检测到可回滚内容: 变更 {}，新增 {}，删除 {}",
-        changed.len(),
-        added.len(),
-        deleted.len()
-    );
+    println!("{}", t!("rollback.summary", changed.len(), added.len(), deleted.len()));
 
     let mut restored_count = 0u32;
     let mut removed_count = 0u32;
 
-    // Recreate deleted directories before restoring files (shallowest first)
     let mut deleted_dirs = manifest.deleted_dirs.clone();
     deleted_dirs.sort();
     for dir_path in &deleted_dirs {
         let target_dir = resolve_safe_path(base_dir, dir_path)?;
         if !target_dir.exists() {
             std::fs::create_dir_all(&target_dir)?;
-            println!("[重建目录] {dir_path}");
+            println!("{}", t!("rollback.recreate-dir", dir_path));
         }
     }
 
     for item in changed {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        println!("[恢复变更] {}", item.path);
+        println!("{}", t!("rollback.restore-changed", item.path));
         if restore_backup(&target_path, base_dir, &backup_root)? {
             restored_count += 1;
         } else {
-            println!("  跳过：未找到备份文件");
+            println!("{}", t!("rollback.skip-no-backup"));
         }
     }
 
     for item in deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        println!("[恢复删除] {}", item.path);
+        println!("{}", t!("rollback.restore-deleted", item.path));
         if restore_backup(&target_path, base_dir, &backup_root)? {
             restored_count += 1;
         } else {
-            println!("  跳过：未找到备份文件");
+            println!("{}", t!("rollback.skip-no-backup"));
         }
     }
 
     for item in added {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        println!("[删除新增] {}", item.path);
+        println!("{}", t!("rollback.remove-added", item.path));
         if target_path.exists() {
             if target_path.is_file() {
                 std::fs::remove_file(&target_path)?;
                 removed_count += 1;
-                println!("  已删除新增文件: {}", target_path.display());
+                println!("{}", t!("rollback.removed-file", target_path.display()));
                 if let Some(parent) = target_path.parent() {
                     cleanup_empty_dirs(parent, base_dir)?;
                 }
@@ -105,44 +94,45 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
                 if target_path.read_dir()?.next().is_none() {
                     std::fs::remove_dir(&target_path)?;
                     removed_count += 1;
-                    println!("  已删除新增空目录: {}", target_path.display());
+                    println!("{}", t!("rollback.removed-empty-dir", target_path.display()));
                     if let Some(parent) = target_path.parent() {
                         cleanup_empty_dirs(parent, base_dir)?;
                     }
                 } else {
                     std::fs::remove_dir_all(&target_path)?;
                     removed_count += 1;
-                    println!("  已删除新增目录: {}", target_path.display());
+                    println!("{}", t!("rollback.removed-dir", target_path.display()));
                 }
             }
         } else {
-            println!("  跳过：新增文件不存在 {}", target_path.display());
+            println!("{}", t!("rollback.skip-not-exists", target_path.display()));
         }
     }
 
-    println!("\n补丁回滚完成！");
-    println!("- 恢复备份文件: {restored_count}");
-    println!("- 删除新增文件: {removed_count}");
+    println!("{}", t!("rollback.complete"));
+    println!("{}", t!("rollback.restored-count", restored_count));
+    println!("{}", t!("rollback.removed-count", removed_count));
 
-    // Clean up backup directory
     if backup_root.exists() {
-        print!(
-            "即将删除所有备份文件 ({}), 确认删除? [y/N]: ",
-            backup_root.display()
-        );
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim().eq_ignore_ascii_case("y") {
-            std::fs::remove_dir_all(&backup_root)?;
-            println!("已清理备份目录。");
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdin());
+        let should_clean = if is_terminal {
+            print!("{}", t!("rollback.cleanup-prompt", backup_root.display()));
+            use std::io::Write;
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            input.trim().eq_ignore_ascii_case("y")
         } else {
-            println!("已跳过清理备份文件。");
+            true
+        };
+        if should_clean {
+            std::fs::remove_dir_all(&backup_root)?;
+            println!("{}", t!("rollback.cleanup-done"));
+        } else {
+            println!("{}", t!("rollback.cleanup-skipped"));
         }
     }
 
-    // Clean up legacy .backup_staging if it exists
     let staging_dir = patch_dir.join(".backup_staging");
     if staging_dir.exists() {
         std::fs::remove_dir_all(&staging_dir)?;

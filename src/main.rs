@@ -1,10 +1,10 @@
-//! binary_patcher CLI 入口：支持 create / apply / bundle / 无参数工作区模式。
-
 use binary_patcher::apply;
 use binary_patcher::bundle::{self, init_workspace};
-use binary_patcher::cli::{Cli, Commands};
+use binary_patcher::cli::{Cli, Commands, PatchFormat};
+use binary_patcher::fmt::{format_size, pause_if_needed};
 use binary_patcher::hdiffpatch;
-use binary_patcher::utils::{ensure_parent_dir, format_size, pause_if_needed};
+use binary_patcher::path::ensure_parent_dir;
+use binary_patcher::t;
 use clap::Parser;
 use std::path::Path;
 
@@ -23,19 +23,19 @@ fn create_single_patch(
     let old_size = std::fs::metadata(old_path)?.len();
     let new_size = std::fs::metadata(new_path)?.len();
 
-    println!("正在读取旧文件: {old_file}");
-    println!("正在读取新文件: {new_file}");
-    println!("正在调用 HDiffPatch 生成补丁...");
+    println!("{}", t!("main.reading-old", old_file));
+    println!("{}", t!("main.reading-new", new_file));
+    println!("{}", t!("main.calling-hdiff"));
     let thread_count =
         hdiffpatch::run_hdiffz(old_path, new_path, patch_path, use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_path)?.len();
 
     println!("{}", "-".repeat(30));
-    println!("补丁创建成功！");
-    println!("  - 使用线程数: {thread_count}");
-    println!("  - 旧文件大小: {}", format_size(old_size));
-    println!("  - 新文件大小: {}", format_size(new_size));
-    println!("  - 补丁文件大小: {}", format_size(patch_size));
+    println!("{}", t!("main.patch-created"));
+    println!("{}", t!("main.threads-used", thread_count));
+    println!("{}", t!("main.old-size", format_size(old_size)));
+    println!("{}", t!("main.new-size", format_size(new_size)));
+    println!("{}", t!("main.patch-size", format_size(patch_size)));
     println!("{}", "-".repeat(30));
 
     Ok(())
@@ -43,6 +43,15 @@ fn create_single_patch(
 
 fn main() {
     let cli = Cli::parse();
+
+    let lang_dir = cli.lang_dir.as_deref();
+    let lang = if cli.lang.is_empty() {
+        binary_patcher::i18n::detect_language()
+    } else {
+        cli.lang.clone()
+    };
+    binary_patcher::i18n::init(&lang, lang_dir);
+
     let use_compression = !cli.no_compress;
 
     let result = match cli.command {
@@ -51,7 +60,7 @@ fn main() {
             new_file,
             patch_file,
         }) => {
-            let fast_format = matches!(cli.patch_format, binary_patcher::cli::PatchFormat::Fast);
+            let fast_format = matches!(cli.patch_format, PatchFormat::Fast);
             create_single_patch(
                 &old_file,
                 &new_file,
@@ -72,11 +81,10 @@ fn main() {
             cli.patch_format.clone(),
         ),
         None => {
-            // No-arg workspace mode
             let base_dir = match std::env::current_dir() {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("警告: 无法获取当前目录 ({e})，使用 '.' 作为工作目录");
+                    eprintln!("{}", t!("main.cwd-failed", e));
                     std::path::PathBuf::from(".")
                 }
             };
@@ -97,7 +105,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("错误: {e}");
+        eprintln!("{}", t!("error.generic", e));
         pause_if_needed();
         std::process::exit(1);
     }

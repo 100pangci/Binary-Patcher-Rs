@@ -1,6 +1,5 @@
-//! CLI 参数解析：使用 clap derive 模式定义所有命令行接口。
-
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "binary_patcher")]
@@ -9,7 +8,6 @@ pub struct Cli {
     #[arg(
         long = "copy-scripts",
         default_value_t = false,
-        help = "（兼容选项，Rust 版本无效）",
         hide = true
     )]
     pub copy_scripts: bool,
@@ -35,25 +33,33 @@ pub struct Cli {
     )]
     pub patch_format: PatchFormat,
 
+    #[arg(
+        long = "lang",
+        default_value = "",
+        help = "语言代码（如 en, zh-CN, ja），不指定时自动检测系统语言"
+    )]
+    pub lang: String,
+
+    #[arg(
+        long = "lang-dir",
+        help = "自定义语言文件目录（包含 {lang}.json 文件）"
+    )]
+    pub lang_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Clone, ValueEnum)]
 pub enum PatchMode {
-    /// 自动判断：内存够用全加载，不够用流式
     Auto,
-    /// 强制流式模式：低内存占用，补丁体积可能更大
     Stream,
-    /// 强制内存模式：全部文件加载到内存，补丁最优
     Memory,
 }
 
 #[derive(Clone, ValueEnum)]
 pub enum PatchFormat {
-    /// 快速模式：hash 匹配，速度快，补丁体积较大
     Fast,
-    /// 精确模式：suffix-string 匹配，补丁更小（默认）
     Precise,
 }
 
