@@ -160,7 +160,11 @@ pub fn tr(key: &str) -> &str {
 /// 从 Cli 中提取语言和语言目录参数并初始化 i18n。
 /// 适用于 apply_patch / rollback_patch 等简单二进制入口。
 pub fn init_from_cli(lang: &str, lang_dir: Option<&std::path::Path>) {
-    let lang = if lang.is_empty() { detect_language() } else { lang.to_string() };
+    let lang = if lang.is_empty() {
+        detect_language()
+    } else {
+        lang.to_string()
+    };
     init(&lang, lang_dir);
 }
 
@@ -252,12 +256,18 @@ mod tests {
 
     #[test]
     fn test_fmt_with_args() {
-        assert_eq!(fmt("{0} {1}", &["hello".into(), "world".into()]), "hello world");
+        assert_eq!(
+            fmt("{0} {1}", &["hello".into(), "world".into()]),
+            "hello world"
+        );
     }
 
     #[test]
     fn test_fmt_repeated_arg() {
-        assert_eq!(fmt("{0} + {0} = {1}", &["1".into(), "2".into()]), "1 + 1 = 2");
+        assert_eq!(
+            fmt("{0} + {0} = {1}", &["1".into(), "2".into()]),
+            "1 + 1 = 2"
+        );
     }
 
     #[test]
@@ -268,7 +278,10 @@ mod tests {
     #[test]
     fn test_load_help_text_nonexistent_key_returns_empty() {
         let text = load_help_text("nonexistent.key.xyz");
-        assert!(text.is_empty(), "expected empty for nonexistent key, got: {text}");
+        assert!(
+            text.is_empty(),
+            "expected empty for nonexistent key, got: {text}"
+        );
     }
 
     #[test]

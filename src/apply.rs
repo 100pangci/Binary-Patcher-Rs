@@ -36,8 +36,7 @@ impl ChangeJournal {
     fn rollback(&self) {
         for entry in self.entries.iter().rev() {
             match entry {
-                JournalEntry::Patched { target }
-                | JournalEntry::Deleted { target } => {
+                JournalEntry::Patched { target } | JournalEntry::Deleted { target } => {
                     if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
                         eprintln!("  [rollback] {}: {e}", target.display());
                     } else {
@@ -215,7 +214,12 @@ fn apply_changed_files(
             if let Err(be) = restore_backup(&target_path, base_dir, &journal.backup_root) {
                 anyhow::bail!(
                     "{}",
-                    t!("apply.sha256-fail-restore", item.path, be, target_path.display())
+                    t!(
+                        "apply.sha256-fail-restore",
+                        item.path,
+                        be,
+                        target_path.display()
+                    )
                 );
             }
             anyhow::bail!("{}", t!("apply.sha256-fail-auto-restore", item.path));
@@ -325,11 +329,7 @@ pub fn apply_single_patch(
 
     println!("{}", "-".repeat(30));
     println!("{}", t!("main.patch-created"));
-    println!(
-        "  - {} '{}'",
-        t!("apply.output-generated"),
-        output_file
-    );
+    println!("  - {} '{}'", t!("apply.output-generated"), output_file);
     println!(
         "  - {}: {}",
         t!("main.patch-size"),

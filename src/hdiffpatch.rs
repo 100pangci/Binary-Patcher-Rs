@@ -10,9 +10,7 @@ fn clamp_thread_count(max: u32) -> u32 {
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(DEFAULT_THREADS as usize);
-    (cpu_count.saturating_sub(1))
-        .max(1)
-        .min(max as usize) as u32
+    (cpu_count.saturating_sub(1)).max(1).min(max as usize) as u32
 }
 
 pub fn get_recommended_thread_count() -> u32 {
@@ -147,8 +145,12 @@ pub fn apply_patch_auto(
     let result = apply_patch_with_retry(old_data, patch_data, thread_count);
     match result {
         Ok(new_data) => {
-            std::fs::write(output_file, &new_data)
-                .map_err(|e| anyhow::anyhow!("{}", t!("ffi.write-output-failed", output_file.display(), e)))?;
+            std::fs::write(output_file, &new_data).map_err(|e| {
+                anyhow::anyhow!(
+                    "{}",
+                    t!("ffi.write-output-failed", output_file.display(), e)
+                )
+            })?;
             Ok(new_data)
         }
         Err(e) if e.is_oom() => {
@@ -160,8 +162,9 @@ pub fn apply_patch_auto(
                 thread_count,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let new_data = std::fs::read(output_file)
-                .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-output-failed", output_file.display(), e)))?;
+            let new_data = std::fs::read(output_file).map_err(|e| {
+                anyhow::anyhow!("{}", t!("ffi.read-output-failed", output_file.display(), e))
+            })?;
             Ok(new_data)
         }
         Err(e) => Err(e.into()),

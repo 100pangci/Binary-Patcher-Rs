@@ -1,12 +1,12 @@
 use crate::cli::PatchFormat;
 use crate::cli::PatchMode;
 use crate::fmt::format_size;
-use crate::t;
 use crate::fs::relative_maps;
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{AddedEntry, ChangedEntry, DeletedEntry, INSTRUCTIONS_NAME, Manifest};
 use crate::path::ensure_parent_dir;
+use crate::t;
 use anyhow::Context;
 use std::path::Path;
 
@@ -56,13 +56,28 @@ pub fn build_patch_bundle(
                 let patch_output = patch_dir.join(format!("{relative_path}.patch"));
                 let entry = match mode {
                     PatchMode::Stream => process_changed_stream(
-                        old, new, &patch_output, use_compression, fast_format, &relative_path,
+                        old,
+                        new,
+                        &patch_output,
+                        use_compression,
+                        fast_format,
+                        &relative_path,
                     )?,
                     PatchMode::Memory => process_changed_mem(
-                        old, new, &patch_output, use_compression, fast_format, &relative_path,
+                        old,
+                        new,
+                        &patch_output,
+                        use_compression,
+                        fast_format,
+                        &relative_path,
                     )?,
                     PatchMode::Auto => process_changed_auto(
-                        old, new, &patch_output, use_compression, fast_format, &relative_path,
+                        old,
+                        new,
+                        &patch_output,
+                        use_compression,
+                        fast_format,
+                        &relative_path,
                     )?,
                 };
                 if let Some(entry) = entry {
@@ -159,7 +174,13 @@ fn process_changed_mem(
         return Ok(None);
     }
     println!("{}", t!("bundle.changed", relative_path));
-    create_patch_mem(&old_data, &new_data, patch_output, use_compression, fast_format)?;
+    create_patch_mem(
+        &old_data,
+        &new_data,
+        patch_output,
+        use_compression,
+        fast_format,
+    )?;
     Ok(Some(ChangedEntry {
         path: relative_path.to_string(),
         old_sha256: old_hash,
@@ -195,13 +216,28 @@ fn process_changed_auto(
         Ok(_) => {
             let patch_size = std::fs::metadata(patch_output)?.len();
             println!("{}", t!("bundle.patch-success"));
-            println!("    - {}: {}", t!("main.old-size"), format_size(od.len() as u64));
-            println!("    - {}: {}", t!("main.new-size"), format_size(nd.len() as u64));
-            println!("    - {}: {}", t!("main.patch-size"), format_size(patch_size));
+            println!(
+                "    - {}: {}",
+                t!("main.old-size"),
+                format_size(od.len() as u64)
+            );
+            println!(
+                "    - {}: {}",
+                t!("main.new-size"),
+                format_size(nd.len() as u64)
+            );
+            println!(
+                "    - {}: {}",
+                t!("main.patch-size"),
+                format_size(patch_size)
+            );
         }
         Err(e) if e.is_oom() => {
             let total_gb = (od.len() + nd.len()) as f64 / (1u64 << 30) as f64;
-            eprintln!("{}", t!("bundle.oom-fallback-stream", format!("{:.1}", total_gb)));
+            eprintln!(
+                "{}",
+                t!("bundle.oom-fallback-stream", format!("{:.1}", total_gb))
+            );
             create_patch_stream(old, new, patch_output, use_compression, fast_format)?;
         }
         Err(e) => anyhow::bail!("{}", t!("bundle.failed-create", relative_path, e)),
@@ -226,7 +262,11 @@ fn print_patch_result(
     println!("    - {}: {}", t!("main.threads-used"), thread_count);
     println!("    - {}: {}", t!("main.old-size"), format_size(old_size));
     println!("    - {}: {}", t!("main.new-size"), format_size(new_size));
-    println!("    - {}: {}", t!("main.patch-size"), format_size(patch_size));
+    println!(
+        "    - {}: {}",
+        t!("main.patch-size"),
+        format_size(patch_size)
+    );
     println!("  {}", "-".repeat(30));
     Ok(())
 }
@@ -280,10 +320,10 @@ fn create_patch_stream(
 }
 
 fn try_read_old_new(old: &Path, new: &Path) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let old_data = std::fs::read(old)
-        .with_context(|| t!("bundle.failed-read-old", old.display()))?;
-    let new_data = std::fs::read(new)
-        .with_context(|| t!("bundle.failed-read-new", new.display()))?;
+    let old_data =
+        std::fs::read(old).with_context(|| t!("bundle.failed-read-old", old.display()))?;
+    let new_data =
+        std::fs::read(new).with_context(|| t!("bundle.failed-read-new", new.display()))?;
     Ok((old_data, new_data))
 }
 

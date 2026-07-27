@@ -88,10 +88,7 @@ fn test_format_size_kb() {
 #[test]
 fn test_format_size_mb() {
     assert_eq!(binary_patcher::fmt::format_size(1024 * 1024), "1.00 MB");
-    assert_eq!(
-        binary_patcher::fmt::format_size(2 * 1024 * 1024),
-        "2.00 MB"
-    );
+    assert_eq!(binary_patcher::fmt::format_size(2 * 1024 * 1024), "2.00 MB");
 }
 
 #[test]
@@ -437,7 +434,10 @@ fn test_apply_failure_auto_rollback() {
 
     // Apply should fail
     let result = binary_patcher::apply::apply_bundle(&game_dir);
-    assert!(result.is_err(), "apply_bundle should fail with corrupted patch");
+    assert!(
+        result.is_err(),
+        "apply_bundle should fail with corrupted patch"
+    );
 
     // Verify rolled back state matches Old/
     let old_files = all_file_relpaths(&base_dir.join("Old"));

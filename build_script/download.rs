@@ -20,7 +20,8 @@ fn extract_zip_entries(
     output_dir: &Path,
 ) {
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
+        let mut entry = archive
+            .by_index(i)
             .unwrap_or_else(|e| panic!("Failed to read zip entry {i}: {e}"));
         let entry_name = entry.name().replace('\\', "/");
         if let Some(rest) = entry_name.strip_prefix(root_prefix) {
@@ -137,10 +138,18 @@ fn get_latest_tag(cache_dir: &Path) -> String {
     });
 
     println!("cargo:warning=Latest HDiffPatch release: {tag_name}");
-    std::fs::create_dir_all(cache_dir)
-        .unwrap_or_else(|e| panic!("Failed to create cache directory {}: {e}", cache_dir.display()));
-    std::fs::write(&version_file, &tag_name)
-        .unwrap_or_else(|e| panic!("Failed to write version file {}: {e}", version_file.display()));
+    std::fs::create_dir_all(cache_dir).unwrap_or_else(|e| {
+        panic!(
+            "Failed to create cache directory {}: {e}",
+            cache_dir.display()
+        )
+    });
+    std::fs::write(&version_file, &tag_name).unwrap_or_else(|e| {
+        panic!(
+            "Failed to write version file {}: {e}",
+            version_file.display()
+        )
+    });
     tag_name
 }
 
@@ -167,14 +176,20 @@ pub fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
     let zip_bytes = response.bytes().expect("Failed to read response bytes");
 
     std::fs::create_dir_all(
-        zip_path.parent().expect("zip_path must have a parent directory"),
+        zip_path
+            .parent()
+            .expect("zip_path must have a parent directory"),
     )
     .expect("Failed to create cache directory");
     std::fs::write(zip_path, &zip_bytes).expect("Failed to save HDiffPatch archive");
 
     if expected_dir.exists() {
-        std::fs::remove_dir_all(expected_dir)
-            .unwrap_or_else(|e| panic!("Failed to clear old extraction {}: {e}", expected_dir.display()));
+        std::fs::remove_dir_all(expected_dir).unwrap_or_else(|e| {
+            panic!(
+                "Failed to clear old extraction {}: {e}",
+                expected_dir.display()
+            )
+        });
     }
 
     let cursor = std::io::Cursor::new(zip_bytes.to_vec());

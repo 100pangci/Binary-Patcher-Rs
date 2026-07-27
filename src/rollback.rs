@@ -19,7 +19,15 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let added = &manifest.added;
     let deleted = &manifest.deleted;
 
-    println!("{}", t!("rollback.summary", changed.len(), added.len(), deleted.len()));
+    println!(
+        "{}",
+        t!(
+            "rollback.summary",
+            changed.len(),
+            added.len(),
+            deleted.len()
+        )
+    );
 
     let mut restored_count = 0u32;
     let mut removed_count = 0u32;
@@ -64,17 +72,26 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
                 println!("{}", t!("rollback.removed-file", target_path.display()));
                 if let Some(parent) = target_path.parent() {
                     for dir in cleanup_empty_dirs(parent, base_dir)? {
-                        println!("{}", t!("rollback.removed-empty-dir", display_path(&dir, base_dir)));
+                        println!(
+                            "{}",
+                            t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
+                        );
                     }
                 }
             } else if target_path.is_dir() {
                 if target_path.read_dir()?.next().is_none() {
                     std::fs::remove_dir(&target_path)?;
                     removed_count += 1;
-                    println!("{}", t!("rollback.removed-empty-dir", target_path.display()));
+                    println!(
+                        "{}",
+                        t!("rollback.removed-empty-dir", target_path.display())
+                    );
                     if let Some(parent) = target_path.parent() {
                         for dir in cleanup_empty_dirs(parent, base_dir)? {
-                            println!("{}", t!("rollback.removed-empty-dir", display_path(&dir, base_dir)));
+                            println!(
+                                "{}",
+                                t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
+                            );
                         }
                     }
                 } else {

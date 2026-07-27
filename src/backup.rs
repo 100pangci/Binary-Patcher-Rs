@@ -53,7 +53,10 @@ pub fn write_backup(
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 retry += 1;
                 if retry >= max_retries {
-                    anyhow::bail!("{}", t!("backup.retry-exhausted", max_retries, backup_path.display()));
+                    anyhow::bail!(
+                        "{}",
+                        t!("backup.retry-exhausted", max_retries, backup_path.display())
+                    );
                 }
                 let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
                 backup_path =

@@ -159,13 +159,19 @@ impl Manifest {
                 anyhow::bail!("{}", t!("manifest.changed-missing-old-sha", idx));
             }
             if !is_valid_sha256(&item.old_sha256) {
-                anyhow::bail!("{}", t!("manifest.changed-invalid-old-sha", idx, item.old_sha256));
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.changed-invalid-old-sha", idx, item.old_sha256)
+                );
             }
             if item.new_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-new-sha", idx));
             }
             if !is_valid_sha256(&item.new_sha256) {
-                anyhow::bail!("{}", t!("manifest.changed-invalid-new-sha", idx, item.new_sha256));
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.changed-invalid-new-sha", idx, item.new_sha256)
+                );
             }
             if item.patch_file.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-patch", idx));
@@ -195,7 +201,10 @@ impl Manifest {
                 anyhow::bail!("{}", t!("manifest.deleted-missing-sha", idx));
             }
             if !is_valid_sha256(&item.old_sha256) {
-                anyhow::bail!("{}", t!("manifest.deleted-invalid-sha", idx, item.old_sha256));
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.deleted-invalid-sha", idx, item.old_sha256)
+                );
             }
         }
 

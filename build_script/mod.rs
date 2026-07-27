@@ -3,8 +3,7 @@ mod download;
 
 use std::path::PathBuf;
 
-const HDIFFPATCH_REPO_API: &str =
-    "https://api.github.com/repos/sisong/HDiffPatch/releases/latest";
+const HDIFFPATCH_REPO_API: &str = "https://api.github.com/repos/sisong/HDiffPatch/releases/latest";
 
 pub fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -15,8 +14,7 @@ pub fn main() {
     println!("cargo:rerun-if-changed=vendor/hdiffpatch-sys/hdiffpatch_wrapper.h");
 
     let manifest_dir = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR")
-            .expect("CARGO_MANIFEST_DIR must be set by cargo"),
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by cargo"),
     );
     let cache_dir = manifest_dir.join("target").join(".hdiffpatch-cache");
     let hd_path = cache_dir.join("src");
