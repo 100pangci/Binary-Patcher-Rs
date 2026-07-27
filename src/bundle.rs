@@ -216,21 +216,9 @@ fn process_changed_auto(
         Ok(_) => {
             let patch_size = std::fs::metadata(patch_output)?.len();
             println!("{}", t!("bundle.patch-success"));
-            println!(
-                "    - {}: {}",
-                t!("main.old-size"),
-                format_size(od.len() as u64)
-            );
-            println!(
-                "    - {}: {}",
-                t!("main.new-size"),
-                format_size(nd.len() as u64)
-            );
-            println!(
-                "    - {}: {}",
-                t!("main.patch-size"),
-                format_size(patch_size)
-            );
+            println!("  {}", t!("main.old-size", format_size(od.len() as u64)));
+            println!("  {}", t!("main.new-size", format_size(nd.len() as u64)));
+            println!("  {}", t!("main.patch-size", format_size(patch_size)));
         }
         Err(e) if e.is_oom() => {
             let total_gb = (od.len() + nd.len()) as f64 / (1u64 << 30) as f64;
@@ -259,14 +247,10 @@ fn print_patch_result(
     let patch_size = std::fs::metadata(patch_file)?.len();
     println!("  {}", "-".repeat(30));
     println!("  {}", t!("bundle.patch-success"));
-    println!("    - {}: {}", t!("main.threads-used"), thread_count);
-    println!("    - {}: {}", t!("main.old-size"), format_size(old_size));
-    println!("    - {}: {}", t!("main.new-size"), format_size(new_size));
-    println!(
-        "    - {}: {}",
-        t!("main.patch-size"),
-        format_size(patch_size)
-    );
+    println!("  {}", t!("main.threads-used", thread_count));
+    println!("  {}", t!("main.old-size", format_size(old_size)));
+    println!("  {}", t!("main.new-size", format_size(new_size)));
+    println!("  {}", t!("main.patch-size", format_size(patch_size)));
     println!("  {}", "-".repeat(30));
     Ok(())
 }

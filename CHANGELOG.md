@@ -1,5 +1,10 @@
 # Changelog
 
+## [dev] — 
+
+### Fixed
+- bundle 模式补丁信息中 `{0}` 占位符未替换，`print_patch_result` 和 `process_changed_auto` 未传递参数导致占位符字面输出
+
 ## [v1.2.0] — 2026-07-27
 
 ### Added
