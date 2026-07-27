@@ -1,3 +1,4 @@
+use binary_patcher::cli;
 use binary_patcher::fmt::pause_if_needed;
 use binary_patcher::rollback;
 use binary_patcher::t;
@@ -30,7 +31,7 @@ struct Cli {
 
 fn main() {
     let about = binary_patcher::i18n::load_help_text("cli.about-rollback");
-    let cmd = Cli::command().about(about);
+    let cmd = cli::apply_base_arg_help(Cli::command().about(about), "cli.rollback-base-dir");
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 

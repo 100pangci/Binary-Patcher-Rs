@@ -1,4 +1,5 @@
 use binary_patcher::apply;
+use binary_patcher::cli;
 use binary_patcher::fmt::pause_if_needed;
 use binary_patcher::t;
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -30,7 +31,7 @@ struct Cli {
 
 fn main() {
     let about = binary_patcher::i18n::load_help_text("cli.about-apply");
-    let cmd = Cli::command().about(about);
+    let cmd = cli::apply_base_arg_help(Cli::command().about(about), "cli.apply-base-dir");
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 

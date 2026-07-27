@@ -1,7 +1,35 @@
-//! 文件系统工具：目录递归遍历、文件/目录相对路径映射、文件复制。
+//! 文件系统工具：目录递归遍历、文件/目录相对路径映射、文件复制、空目录清理。
 
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// 从 start_dir 向上逐级清理空目录，直到 base_dir 为止。
+pub fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let base_abs = std::path::absolute(base_dir)?;
+    let mut current = start_dir.to_path_buf();
+    let mut removed = Vec::new();
+    loop {
+        if current == base_abs {
+            break;
+        }
+        if current.is_dir() {
+            let has_entries = current.read_dir()?.next().is_some();
+            if !has_entries {
+                std::fs::remove_dir(&current)?;
+                removed.push(current.clone());
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    Ok(removed)
+}
 
 pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(base_dir)

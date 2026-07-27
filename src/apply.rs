@@ -1,5 +1,5 @@
 use crate::backup::{backup_root_dir, create_backup, restore_backup, write_backup};
-use crate::fs::copy_file;
+use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{apply_patch_auto, run_hpatchz};
 use crate::manifest::Manifest;
@@ -66,7 +66,7 @@ impl ChangeJournal {
                         }
                     }
                     if let Some(parent) = target.parent() {
-                        let _ = cleanup_single_empty_dir(parent, &self.base_dir);
+                        let _ = cleanup_empty_dirs(parent, &self.base_dir);
                     }
                 }
                 JournalEntry::DeletedDir { target } => {
@@ -82,31 +82,6 @@ impl ChangeJournal {
         }
         println!("  [rollback] All changes have been undone.");
     }
-}
-
-fn cleanup_single_empty_dir(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
-    let base_abs = std::path::absolute(base_dir)?;
-    let mut current = start_dir.to_path_buf();
-    loop {
-        if current == base_abs {
-            break;
-        }
-        if current.is_dir() {
-            let has_entries = current.read_dir()?.next().is_some();
-            if !has_entries {
-                std::fs::remove_dir(&current)?;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => break,
-        }
-    }
-    Ok(())
 }
 
 pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {

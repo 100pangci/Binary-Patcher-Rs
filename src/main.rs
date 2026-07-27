@@ -43,7 +43,7 @@ fn create_single_patch(
 
 fn main() {
     let about = binary_patcher::i18n::load_help_text("cli.about-bp");
-    let cmd = Cli::command().about(about);
+    let cmd = binary_patcher::cli::apply_arg_help(Cli::command().about(about));
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 

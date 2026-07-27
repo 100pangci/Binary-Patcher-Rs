@@ -1,34 +1,9 @@
 use crate::backup::{backup_root_dir, restore_backup};
+use crate::fs::cleanup_empty_dirs;
 use crate::manifest::Manifest;
 use crate::path::{display_path, resolve_safe_path};
 use crate::t;
 use std::path::Path;
-
-fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
-    let base_abs = std::path::absolute(base_dir)?;
-    let mut current = start_dir.to_path_buf();
-    loop {
-        if current == base_abs {
-            break;
-        }
-        if current.is_dir() {
-            let has_entries = current.read_dir()?.next().is_some();
-            if !has_entries {
-                std::fs::remove_dir(&current)?;
-                println!("{}", t!("rollback.removed-empty-dir", display_path(&current, base_dir)));
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => break,
-        }
-    }
-    Ok(())
-}
 
 pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
     let patch_dir = base_dir.join("Patch");
@@ -88,7 +63,9 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
                 removed_count += 1;
                 println!("{}", t!("rollback.removed-file", target_path.display()));
                 if let Some(parent) = target_path.parent() {
-                    cleanup_empty_dirs(parent, base_dir)?;
+                    for dir in cleanup_empty_dirs(parent, base_dir)? {
+                        println!("{}", t!("rollback.removed-empty-dir", display_path(&dir, base_dir)));
+                    }
                 }
             } else if target_path.is_dir() {
                 if target_path.read_dir()?.next().is_none() {
@@ -96,7 +73,9 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
                     removed_count += 1;
                     println!("{}", t!("rollback.removed-empty-dir", target_path.display()));
                     if let Some(parent) = target_path.parent() {
-                        cleanup_empty_dirs(parent, base_dir)?;
+                        for dir in cleanup_empty_dirs(parent, base_dir)? {
+                            println!("{}", t!("rollback.removed-empty-dir", display_path(&dir, base_dir)));
+                        }
                     }
                 } else {
                     std::fs::remove_dir_all(&target_path)?;
@@ -126,6 +105,12 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
             true
         };
         if should_clean {
+            if !backup_root.starts_with(&patch_dir) {
+                anyhow::bail!(
+                    "安全拒绝: 备份目录 {} 不在 Patch 目录内",
+                    backup_root.display()
+                );
+            }
             std::fs::remove_dir_all(&backup_root)?;
             println!("{}", t!("rollback.cleanup-done"));
         } else {

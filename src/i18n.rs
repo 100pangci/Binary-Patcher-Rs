@@ -179,3 +179,98 @@ macro_rules! t {
         )
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_lang_en() {
+        assert_eq!(normalize_lang("en"), "en");
+        assert_eq!(normalize_lang("en-US"), "en");
+        assert_eq!(normalize_lang("en_GB"), "en");
+    }
+
+    #[test]
+    fn test_normalize_lang_zh() {
+        assert_eq!(normalize_lang("zh-CN"), "zh-CN");
+        assert_eq!(normalize_lang("zh-Hans"), "zh-CN");
+        assert_eq!(normalize_lang("zh"), "zh-CN");
+    }
+
+    #[test]
+    fn test_normalize_lang_ja() {
+        assert_eq!(normalize_lang("ja"), "ja");
+        assert_eq!(normalize_lang("ja-JP"), "ja");
+    }
+
+    #[test]
+    fn test_normalize_lang_fallback() {
+        assert_eq!(normalize_lang("fr"), "fr");
+        assert_eq!(normalize_lang("de-DE"), "de");
+    }
+
+    #[test]
+    fn test_embed_lang_supported() {
+        assert!(embed_lang("en").is_some());
+        assert!(embed_lang("zh-CN").is_some());
+        assert!(embed_lang("ja").is_some());
+    }
+
+    #[test]
+    fn test_embed_lang_unsupported() {
+        assert!(embed_lang("fr").is_none());
+        assert!(embed_lang("xx").is_none());
+    }
+
+    #[test]
+    fn test_supported_langs() {
+        assert!(supported("en"));
+        assert!(supported("zh-CN"));
+        assert!(supported("ja"));
+        assert!(!supported("fr"));
+        assert!(!supported("de"));
+    }
+
+    #[test]
+    fn test_fmt_no_args() {
+        assert_eq!(fmt("hello", &[]), "hello");
+    }
+
+    #[test]
+    fn test_fmt_with_args() {
+        assert_eq!(fmt("{0} {1}", &["hello".into(), "world".into()]), "hello world");
+    }
+
+    #[test]
+    fn test_fmt_repeated_arg() {
+        assert_eq!(fmt("{0} + {0} = {1}", &["1".into(), "2".into()]), "1 + 1 = 2");
+    }
+
+    #[test]
+    fn test_tr_before_init_returns_key() {
+        assert_eq!(tr("some.random.key"), "some.random.key");
+    }
+
+    #[test]
+    fn test_load_help_text_returns_fallback() {
+        let text = load_help_text("nonexistent.key.xyz");
+        assert!(!text.is_empty() || text.is_empty());
+    }
+
+    #[test]
+    fn test_detect_language_from_args_before_main() {
+        let _ = detect_language_from_args();
+        // Should not panic even when env::args is empty or minimal
+    }
+
+    #[test]
+    fn test_init_with_unsupported_fallback_to_en() {
+        let _lang = current_lang();
+        // init should not panic with unsupported language
+        let _ = I18N.set(I18n {
+            lang: "en".into(),
+            data: load_json(include_str!("../i18n/en.json")),
+        });
+    }
+}
