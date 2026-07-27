@@ -64,7 +64,7 @@ jobs:
           Copy-Item "target\release\binary_patcher.exe" -Destination $stage
           Copy-Item "target\release\apply_patch.exe" -Destination $stage
           Copy-Item "target\release\rollback_patch.exe" -Destination $stage
-          Compress-Archive -Path "$stage\*" -DestinationPath "binary_patcher_rs_toolkit_win.zip" -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath "binary_patcher_rs_toolkit_windows.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -79,6 +79,8 @@ jobs:
     needs: [build]
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -88,7 +90,16 @@ jobs:
           mkdir -p release_files
           find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release_files/ \;
 
+      - name: Extract changelog entry
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          awk -v tag="$TAG" '
+            $0 ~ "^## \\[" tag "\\]" { found=1 }
+            found && $0 ~ "^## \\[" && $0 !~ "^## \\[" tag "\\]" { exit }
+            found
+          ' CHANGELOG.md > release_body.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: release_files/*
-          generate_release_notes: true
+          body_path: release_body.md
