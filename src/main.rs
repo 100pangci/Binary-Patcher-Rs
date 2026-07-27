@@ -6,7 +6,7 @@ use binary_patcher::apply;
 use binary_patcher::hdiffpatch;
 use binary_patcher::utils::{format_size, ensure_parent_dir, pause_if_needed};
 
-fn create_single_patch(old_file: &str, new_file: &str, patch_file: &str, use_compression: bool) -> anyhow::Result<()> {
+fn create_single_patch(old_file: &str, new_file: &str, patch_file: &str, use_compression: bool, fast_format: bool) -> anyhow::Result<()> {
     let old_path = Path::new(old_file);
     let new_path = Path::new(new_file);
     let patch_path = Path::new(patch_file);
@@ -18,7 +18,7 @@ fn create_single_patch(old_file: &str, new_file: &str, patch_file: &str, use_com
     println!("正在读取旧文件: {old_file}");
     println!("正在读取新文件: {new_file}");
     println!("正在调用 HDiffPatch 生成补丁...");
-    let thread_count = hdiffpatch::run_hdiffz(old_path, new_path, patch_path, use_compression)?;
+    let thread_count = hdiffpatch::run_hdiffz(old_path, new_path, patch_path, use_compression, fast_format)?;
     let patch_size = std::fs::metadata(patch_path)?.len();
 
     println!("{}", "-".repeat(30));
@@ -38,7 +38,8 @@ fn main() {
 
     let result = match cli.command {
         Some(Commands::Create { old_file, new_file, patch_file }) => {
-            create_single_patch(&old_file, &new_file, &patch_file, use_compression)
+            let fast_format = matches!(cli.patch_format, binary_patcher::cli::PatchFormat::Fast);
+            create_single_patch(&old_file, &new_file, &patch_file, use_compression, fast_format)
         }
         Some(Commands::Apply { old_file, patch_file, output_file }) => {
             apply::apply_single_patch(&old_file, &patch_file, &output_file)

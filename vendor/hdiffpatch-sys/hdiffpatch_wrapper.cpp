@@ -181,53 +181,93 @@ int hdiffpatch_apply(
     int thread_num)
 {
     try {
-        hpatch_singleCompressedDiffInfo diffInfo;
-        if (!getSingleCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size))
-            return -1; // patch header parse error
+        // Try single compressed diff first (precise mode: create_single_compressed_diff)
+        {
+            hpatch_singleCompressedDiffInfo diffInfo;
+            if (getSingleCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size)) {
+                size_t new_size = (size_t)diffInfo.newDataSize;
+                *out_new_size = new_size;
+                *out_new_data = (unsigned char*)std::malloc(new_size);
+                if (!*out_new_data) return -2; // output buffer malloc failed
 
-        size_t new_size = (size_t)diffInfo.newDataSize;
-        *out_new_size = new_size;
-        *out_new_data = (unsigned char*)std::malloc(new_size);
-        if (!*out_new_data) return -2; // output buffer malloc failed
+                // Wrap in-memory buffers as streams for patch_single_stream (supports MT)
+                hpatch_TStreamOutput out_newStream;
+                hpatch_TStreamInput  oldStream;
+                hpatch_TStreamInput  diffStream;
+                mem_as_hStreamOutput(&out_newStream, *out_new_data, *out_new_data + new_size);
+                mem_as_hStreamInput(&oldStream, old_data, old_data + old_size);
+                mem_as_hStreamInput(&diffStream, patch_data, patch_data + patch_size);
 
-        // Wrap in-memory buffers as streams for patch_single_stream (supports MT)
-        hpatch_TStreamOutput out_newStream;
-        hpatch_TStreamInput  oldStream;
-        hpatch_TStreamInput  diffStream;
-        mem_as_hStreamOutput(&out_newStream, *out_new_data, *out_new_data + new_size);
-        mem_as_hStreamInput(&oldStream, old_data, old_data + old_size);
-        mem_as_hStreamInput(&diffStream, patch_data, patch_data + patch_size);
+                Cache cache = { nullptr };
+                sspatch_listener_t listener;
+                std::memset(&listener, 0, sizeof(listener));
+                listener.import = &cache;
+                listener.onDiffInfo = on_diff_info;
+                listener.onPatchFinish = on_patch_finish;
 
-        Cache cache = { nullptr };
-        sspatch_listener_t listener;
-        std::memset(&listener, 0, sizeof(listener));
-        listener.import = &cache;
-        listener.onDiffInfo = on_diff_info;
-        listener.onPatchFinish = on_patch_finish;
+                // Cap thread count at 5 (HDiffPatch supported range, same as hpatchz -p-)
+                size_t capped_threads = (size_t)thread_num;
+                if (capped_threads < 1) capped_threads = 1;
+                if (capped_threads > 5) capped_threads = 5;
 
-        // Cap thread count at 5 (HDiffPatch supported range, same as hpatchz -p-)
-        size_t capped_threads = (size_t)thread_num;
-        if (capped_threads < 1) capped_threads = 1;
-        if (capped_threads > 5) capped_threads = 5;
+                hpatch_BOOL result = patch_single_stream(
+                    &listener,
+                    &out_newStream,
+                    &oldStream,
+                    &diffStream,
+                    0,           // diffInfo_pos
+                    nullptr,     // coversListener
+                    capped_threads
+                );
 
-        hpatch_BOOL result = patch_single_stream(
-            &listener,
-            &out_newStream,
-            &oldStream,
-            &diffStream,
-            0,           // diffInfo_pos
-            nullptr,     // coversListener
-            capped_threads
-        );
-
-        if (!result) {
-            // onPatchFinish already freed cache.data via listener
-            std::free(*out_new_data);
-            *out_new_data = nullptr;
-            *out_new_size = 0;
-            return -3; // patch apply failed
+                if (!result) {
+                    // onPatchFinish already freed cache.data via listener
+                    std::free(*out_new_data);
+                    *out_new_data = nullptr;
+                    *out_new_size = 0;
+                    return -3; // patch apply failed
+                }
+                return 0;
+            }
         }
-        return 0;
+
+        // Fallback: try compressed diff (fast mode: create_compressed_diff)
+        {
+            hpatch_compressedDiffInfo diffInfo;
+            std::memset(&diffInfo, 0, sizeof(diffInfo));
+            if (!getCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size))
+                return -1; // patch header parse error
+
+            size_t new_size = (size_t)diffInfo.newDataSize;
+            *out_new_size = new_size;
+            *out_new_data = (unsigned char*)std::malloc(new_size);
+            if (!*out_new_data) return -2; // output buffer malloc failed
+
+            hpatch_TDecompress* decompressPlugin = nullptr;
+            if (diffInfo.compressedCount > 0)
+                decompressPlugin = &zlibDecompressPlugin;
+
+            hpatch_BOOL result = patch_decompress_mem(
+                *out_new_data, *out_new_data + new_size,
+                old_data, old_data + old_size,
+                patch_data, patch_data + patch_size,
+                decompressPlugin
+            );
+
+            if (!result) {
+                if (decompressPlugin && decompressPlugin->decError != hpatch_dec_ok) {
+                    std::free(*out_new_data);
+                    *out_new_data = nullptr;
+                    *out_new_size = 0;
+                    return -3;
+                }
+                std::free(*out_new_data);
+                *out_new_data = nullptr;
+                *out_new_size = 0;
+                return -3;
+            }
+            return 0;
+        }
     } catch (...) {
         if (*out_new_data) {
             std::free(*out_new_data);

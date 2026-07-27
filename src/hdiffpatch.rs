@@ -67,6 +67,7 @@ pub fn run_hdiffz(
     new_file: &Path,
     patch_file: &Path,
     use_compression: bool,
+    fast_format: bool,
 ) -> anyhow::Result<u32> {
     let thread_count = get_diff_thread_count();
 
@@ -78,7 +79,7 @@ pub fn run_hdiffz(
             .map_err(|e| anyhow::anyhow!("读取旧文件失败 {}: {e}", old_file.display()))?;
         let new_data = std::fs::read(new_file)
             .map_err(|e| anyhow::anyhow!("读取新文件失败 {}: {e}", new_file.display()))?;
-        let patch_data = ffi::create_patch(&old_data, &new_data, thread_count, use_compression, false)
+        let patch_data = ffi::create_patch(&old_data, &new_data, thread_count, use_compression, fast_format)
             .map_err(|e| anyhow::anyhow!("创建补丁失败: {e}"))?;
         std::fs::write(patch_file, &patch_data)
             .map_err(|e| anyhow::anyhow!("写入补丁文件失败 {}: {e}", patch_file.display()))?;
@@ -94,7 +95,7 @@ pub fn run_hdiffz(
             let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
             if msg.contains("内存") || msg.contains("memory") || msg.contains("OOM") {
                 eprintln!("注意: 内存不足（{:.1}GB 文件），自动切换到流式模式", total_gb);
-                run_hdiffz_stream(old_file, new_file, patch_file, thread_count, use_compression, false)
+                run_hdiffz_stream(old_file, new_file, patch_file, thread_count, use_compression, fast_format)
             } else {
                 Err(e)
             }

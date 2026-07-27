@@ -1,34 +1,4 @@
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-/// Create mock hdiffz/hpatchz executables for testing
-fn setup_mock_tools(test_dir: &Path) {
-    let bin_dir = test_dir.join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-
-    #[cfg(windows)]
-    {
-        // Mock hdiffz: copies third arg (new) to fourth arg (patch)
-        let hdiffz = "@echo off\r\ncopy /y \"%~3\" \"%~4\" >nul\r\nexit /b 0\r\n";
-        std::fs::write(bin_dir.join("hdiffz.bat"), hdiffz).unwrap();
-        // Mock hpatchz: copies third arg (patch) to fourth arg (output)
-        let hpatchz = "@echo off\r\ncopy /y \"%~3\" \"%~4\" >nul\r\nexit /b 0\r\n";
-        std::fs::write(bin_dir.join("hpatchz.bat"), hpatchz).unwrap();
-    }
-
-    #[cfg(unix)]
-    {
-        let hdiffz = "#!/bin/sh\ncp -- \"$3\" \"$4\"\n";
-        let hpatchz = "#!/bin/sh\ncp -- \"$3\" \"$4\"\n";
-        let hdiffz_path = bin_dir.join("hdiffz");
-        let hpatchz_path = bin_dir.join("hpatchz");
-        std::fs::write(&hdiffz_path, hdiffz).unwrap();
-        std::fs::write(&hpatchz_path, hpatchz).unwrap();
-        std::fs::set_permissions(&hdiffz_path, PermissionsExt::from_mode(0o755)).unwrap();
-        std::fs::set_permissions(&hpatchz_path, PermissionsExt::from_mode(0o755)).unwrap();
-    }
-}
 
 /// Build test workspace with Old/New directories
 fn build_workspace(base_dir: &Path) -> (PathBuf, PathBuf) {
@@ -345,11 +315,6 @@ fn test_restore_backup_no_backup() {
 fn test_full_workflow() {
     let root = tempfile::tempdir().unwrap();
     let base_dir = root.path().to_path_buf();
-    setup_mock_tools(&base_dir);
-
-    // Change working directory to base_dir for tool finding
-    let orig_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&base_dir).unwrap();
 
     // Build workspace
     build_workspace(&base_dir);
@@ -404,7 +369,74 @@ fn test_full_workflow() {
     assert!(game_dir.join("deep").is_dir(), "directory deep/ should be recreated after rollback");
     assert!(game_dir.join("deep/nested").is_dir(), "directory deep/nested/ should be recreated after rollback");
     assert!(game_dir.join("deep/nested/old_cache.tmp").exists(), "file deep/nested/old_cache.tmp should be restored after rollback");
+}
 
-    // Restore working directory
-    std::env::set_current_dir(&orig_dir).unwrap();
+// ===========================================================================
+// Patch format: fast vs precise
+// ===========================================================================
+
+fn make_test_data() -> (Vec<u8>, Vec<u8>) {
+    let mut old_data = Vec::with_capacity(64 * 1024);
+    let mut new_data = Vec::with_capacity(64 * 1024);
+
+    for i in 0..4096u32 {
+        let val = (i.wrapping_mul(0x9E3779B1).wrapping_add(0x85EBCA77)) as u32;
+        old_data.extend_from_slice(&val.to_le_bytes());
+        new_data.extend_from_slice(&val.to_le_bytes());
+    }
+
+    // Modify a chunk in the middle so both algorithms have real diff work
+    let offset = 8192;
+    for j in 0..512 {
+        new_data[offset + j] = new_data[offset + j].wrapping_add(1);
+    }
+
+    // Insert a block at the end
+    for k in 0..1024 {
+        new_data.push((k % 256) as u8);
+    }
+
+    (old_data, new_data)
+}
+
+#[test]
+fn test_patch_format_fast_and_precise_both_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let (old_data, new_data) = make_test_data();
+
+    let old_path = dir.path().join("old.bin");
+    let new_path = dir.path().join("new.bin");
+    std::fs::write(&old_path, &old_data).unwrap();
+    std::fs::write(&new_path, &new_data).unwrap();
+
+    let patch_fast = dir.path().join("patch_fast.hdiff");
+    let patch_precise = dir.path().join("patch_precise.hdiff");
+
+    // Create patch with fast format
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_fast, false, true).unwrap();
+
+    // Create patch with precise format
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_precise, false, false).unwrap();
+
+    // Apply fast patch
+    let out_fast = dir.path().join("out_fast.bin");
+    binary_patcher::hdiffpatch::run_hpatchz(&old_path, &patch_fast, &out_fast).unwrap();
+    assert_eq!(std::fs::read(&out_fast).unwrap(), new_data);
+
+    // Apply precise patch
+    let out_precise = dir.path().join("out_precise.bin");
+    binary_patcher::hdiffpatch::run_hpatchz(&old_path, &patch_precise, &out_precise).unwrap();
+    assert_eq!(std::fs::read(&out_precise).unwrap(), new_data);
+
+    let fast_size = std::fs::metadata(&patch_fast).unwrap().len();
+    let precise_size = std::fs::metadata(&patch_precise).unwrap().len();
+
+    println!("fast patch: {fast_size} bytes, precise patch: {precise_size} bytes");
+
+    // Fast patch should not be identical to precise (they use different algorithms)
+    if fast_size == precise_size {
+        let fast_bytes = std::fs::read(&patch_fast).unwrap();
+        let precise_bytes = std::fs::read(&patch_precise).unwrap();
+        assert_ne!(fast_bytes, precise_bytes, "Fast and precise patches should differ");
+    }
 }
