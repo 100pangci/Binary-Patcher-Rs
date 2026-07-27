@@ -83,10 +83,17 @@ pub fn run_hdiffz(
     match mem_result {
         Ok(()) => Ok(thread_count),
         Err(e) if e.is_oom() => {
-            let old_size = std::fs::metadata(old_file).map(|m| m.len()).unwrap_or(0);
-            let new_size = std::fs::metadata(new_file).map(|m| m.len()).unwrap_or(0);
-            let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
-            eprintln!("注意: 内存不足（{:.1}GB 文件），自动切换到流式模式", total_gb);
+            let old_size = std::fs::metadata(old_file).map(|m| m.len()).ok();
+            let new_size = std::fs::metadata(new_file).map(|m| m.len()).ok();
+            match (old_size, new_size) {
+                (Some(os), Some(ns)) => {
+                    let total_gb = (os + ns) as f64 / (1u64 << 30) as f64;
+                    eprintln!("注意: 内存不足（{:.1}GB 文件），自动切换到流式模式", total_gb);
+                }
+                _ => {
+                    eprintln!("注意: 内存不足，自动切换到流式模式");
+                }
+            }
             run_hdiffz_stream(old_file, new_file, patch_file, thread_count, use_compression, fast_format)
                 .map_err(|e| anyhow::anyhow!("{e}"))
         }

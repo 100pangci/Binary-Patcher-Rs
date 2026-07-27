@@ -7,7 +7,8 @@ pub struct Cli {
     #[arg(
         long = "copy-scripts",
         default_value_t = false,
-        help = "（兼容选项，Rust 版本无效）"
+        help = "（兼容选项，Rust 版本无效）",
+        hide = true
     )]
     pub copy_scripts: bool,
 

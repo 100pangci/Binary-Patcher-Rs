@@ -11,6 +11,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     let patch_dir = base_dir.join("Patch");
 
     if patch_dir.exists() {
+        eprintln!("注意: 将清空已有的 Patch 目录: {}", patch_dir.display());
         std::fs::remove_dir_all(&patch_dir)?;
     }
     std::fs::create_dir_all(&patch_dir)?;

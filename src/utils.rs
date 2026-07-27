@@ -150,14 +150,28 @@ pub fn create_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) ->
 
     let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
     let mut backup_path = backup_dir.join(&backup_name);
+    let mut retry = 0u32;
 
-    if backup_path.exists() {
-        let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
-        backup_path = backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}"));
+    let content = std::fs::read(target_path)?;
+
+    loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup_path)
+        {
+            Ok(mut f) => {
+                std::io::Write::write_all(&mut f, &content)?;
+                return Ok(backup_path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                retry += 1;
+                let timestamp = chrono::Local::now().format(".%Y%m%d%H%M%S");
+                backup_path = backup_dir.join(format!("{file_name}{BACKUP_SUFFIX}{timestamp}_{retry}"));
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
-
-    std::fs::copy(target_path, &backup_path)?;
-    Ok(backup_path)
 }
 
 pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -> anyhow::Result<bool> {
@@ -182,9 +196,17 @@ pub fn restore_backup(target_path: &Path, base_dir: &Path, backup_root: &Path) -
 
     let do_restore = |backup_path: &Path| -> anyhow::Result<bool> {
         ensure_parent_dir(target_path)?;
-        std::fs::copy(backup_path, target_path)?;
-        std::fs::remove_file(backup_path)?;
-        Ok(true)
+        if target_path.exists() {
+            std::fs::remove_file(target_path)?;
+        }
+        match std::fs::rename(backup_path, target_path) {
+            Ok(()) => Ok(true),
+            Err(_) => {
+                std::fs::copy(backup_path, target_path)?;
+                std::fs::remove_file(backup_path)?;
+                Ok(true)
+            }
+        }
     };
 
     // Try new backup location first

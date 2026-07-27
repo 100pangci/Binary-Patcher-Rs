@@ -11,15 +11,18 @@ struct Cli {
     base_dir: PathBuf,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let result = rollback::rollback_bundle(&cli.base_dir);
 
-    if let Err(e) = result {
-        eprintln!("错误: {e}");
-        pause_if_needed();
-        std::process::exit(1);
+    match rollback::rollback_bundle(&cli.base_dir) {
+        Ok(()) => {
+            pause_if_needed();
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("错误: {e}");
+            pause_if_needed();
+            Err(e)
+        }
     }
-
-    pause_if_needed();
 }

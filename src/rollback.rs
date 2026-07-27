@@ -2,9 +2,9 @@ use std::path::Path;
 use crate::manifest::Manifest;
 use crate::utils::{resolve_safe_path, restore_backup, display_path, backup_root_dir};
 
-fn cleanup_empty_dirs(start: &Path, base_dir: &Path) -> anyhow::Result<()> {
+fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<()> {
     let base_abs = std::path::absolute(base_dir)?;
-    let mut current = start.to_path_buf();
+    let mut current = start_dir.to_path_buf();
     loop {
         if current == base_abs {
             break;
@@ -90,12 +90,22 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
                 std::fs::remove_file(&target_path)?;
                 removed_count += 1;
                 println!("  已删除新增文件: {}", target_path.display());
-                // Clean up empty parent directories created by this added file
                 if let Some(parent) = target_path.parent() {
                     cleanup_empty_dirs(parent, base_dir)?;
                 }
-            } else {
-                println!("  跳过：目标是目录，未删除 {}", target_path.display());
+            } else if target_path.is_dir() {
+                if target_path.read_dir()?.next().is_none() {
+                    std::fs::remove_dir(&target_path)?;
+                    removed_count += 1;
+                    println!("  已删除新增空目录: {}", target_path.display());
+                    if let Some(parent) = target_path.parent() {
+                        cleanup_empty_dirs(parent, base_dir)?;
+                    }
+                } else {
+                    std::fs::remove_dir_all(&target_path)?;
+                    removed_count += 1;
+                    println!("  已删除新增目录: {}", target_path.display());
+                }
             }
         } else {
             println!("  跳过：新增文件不存在 {}", target_path.display());
@@ -108,6 +118,7 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
     // Clean up backup directory
     if backup_root.exists() {
+        println!("提示: 即将删除所有备份文件 ({})，确认无误后继续。", backup_root.display());
         std::fs::remove_dir_all(&backup_root)?;
         println!("已清理备份目录。");
     }

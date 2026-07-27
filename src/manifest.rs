@@ -45,6 +45,10 @@ impl Manifest {
     }
 }
 
+fn is_valid_sha256(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Default for Manifest {
     fn default() -> Self {
         Self {
@@ -72,8 +76,14 @@ impl Manifest {
             if item.old_sha256.is_empty() {
                 anyhow::bail!("manifest changed[{idx}] 缺少字段 'old_sha256'");
             }
+            if !is_valid_sha256(&item.old_sha256) {
+                anyhow::bail!("manifest changed[{idx}] old_sha256 格式无效: {}", item.old_sha256);
+            }
             if item.new_sha256.is_empty() {
                 anyhow::bail!("manifest changed[{idx}] 缺少字段 'new_sha256'");
+            }
+            if !is_valid_sha256(&item.new_sha256) {
+                anyhow::bail!("manifest changed[{idx}] new_sha256 格式无效: {}", item.new_sha256);
             }
             if item.patch_file.is_empty() {
                 anyhow::bail!("manifest changed[{idx}] 缺少字段 'patch_file'");
@@ -87,6 +97,9 @@ impl Manifest {
             if item.new_sha256.is_empty() {
                 anyhow::bail!("manifest added[{idx}] 缺少字段 'new_sha256'");
             }
+            if !is_valid_sha256(&item.new_sha256) {
+                anyhow::bail!("manifest added[{idx}] new_sha256 格式无效: {}", item.new_sha256);
+            }
             if item.file.is_empty() {
                 anyhow::bail!("manifest added[{idx}] 缺少字段 'file'");
             }
@@ -98,6 +111,9 @@ impl Manifest {
             }
             if item.old_sha256.is_empty() {
                 anyhow::bail!("manifest deleted[{idx}] 缺少字段 'old_sha256'");
+            }
+            if !is_valid_sha256(&item.old_sha256) {
+                anyhow::bail!("manifest deleted[{idx}] old_sha256 格式无效: {}", item.old_sha256);
             }
         }
 

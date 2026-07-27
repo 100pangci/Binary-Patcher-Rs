@@ -2,6 +2,20 @@ use std::path::{Path, PathBuf};
 
 const HDIFFPATCH_REPO_API: &str = "https://api.github.com/repos/sisong/HDiffPatch/releases/latest";
 
+fn check_path_traversal(rest: &str, entry_name: &str) {
+    for c in std::path::Path::new(rest).components() {
+        match c {
+            std::path::Component::ParentDir => {
+                panic!("ZIP 包包含路径遍历攻击: {entry_name}");
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                panic!("ZIP 包包含绝对路径: {entry_name}");
+            }
+            _ => {}
+        }
+    }
+}
+
 fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
     let dir_name = format!("zlib-{version}");
     let zlib_dir = cache_dir.join(&dir_name);
@@ -25,6 +39,7 @@ fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
         let root_prefix = format!("{dir_name}/");
         if let Some(rest) = name.strip_prefix(&root_prefix) {
             if rest.is_empty() || rest.ends_with('/') { continue; }
+            check_path_traversal(rest, &name);
             let out_path = zlib_dir.join(rest);
             if let Some(p) = out_path.parent() {
                 std::fs::create_dir_all(p).ok();
@@ -275,6 +290,7 @@ fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
 
         if let Some(rest) = entry_name_norm.strip_prefix(&root_prefix) {
             if rest.is_empty() || rest.ends_with('/') { continue; }
+            check_path_traversal(rest, &entry_name_norm);
             let out_path = expected_dir.join(rest);
             if let Some(p) = out_path.parent() {
                 std::fs::create_dir_all(p).ok();

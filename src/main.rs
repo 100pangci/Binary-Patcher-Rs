@@ -49,7 +49,13 @@ fn main() {
         }
         None => {
             // No-arg workspace mode
-            let base_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let base_dir = match std::env::current_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("警告: 无法获取当前目录 ({e})，回退至当前工作目录");
+                    std::path::PathBuf::from(".")
+                }
+            };
             match init_workspace(&base_dir) {
                 Ok(true) => bundle::build_patch_bundle(&base_dir, use_compression, cli.patch_mode.clone(), cli.patch_format.clone()),
                 Ok(false) => {

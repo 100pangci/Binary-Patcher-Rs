@@ -53,7 +53,17 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 
         let new_hash = sha256_of_file(&target_path)?;
         if new_hash != item.new_sha256 {
-            restore_backup(&target_path, base_dir, &backup_root)?;
+            match restore_backup(&target_path, base_dir, &backup_root) {
+                Err(backup_err) => {
+                    anyhow::bail!(
+                        "错误: 补丁应用后校验失败: {}\n\
+                         自动恢复也失败: {}\n\
+                         文件可能已损坏，请检查: {}",
+                        item.path, backup_err, target_path.display()
+                    );
+                }
+                Ok(_) => {}
+            }
             anyhow::bail!(
                 "错误: 补丁应用后校验失败: {}\n已自动恢复原始文件。",
                 item.path
@@ -65,6 +75,13 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         let source_file = resolve_safe_path(&patch_dir, &item.file)?;
         println!("[新增] {}", item.path);
+        if target_path.exists() {
+            let backup_name = create_backup(&target_path, base_dir, &backup_root)?
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            println!("  目标已存在，已备份到: {backup_name}");
+        }
         copy_file(&source_file, &target_path)?;
 
         let new_hash = sha256_of_file(&target_path)?;
@@ -91,7 +108,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
     for dir_path in &manifest.deleted_dirs {
         let target_dir = resolve_safe_path(base_dir, dir_path)?;
         if target_dir.exists() && target_dir.is_dir() {
-            std::fs::remove_dir(&target_dir)?;
+            std::fs::remove_dir_all(&target_dir)?;
             println!("[删除目录] {dir_path}");
         }
     }
