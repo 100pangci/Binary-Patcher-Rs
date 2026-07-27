@@ -19,7 +19,13 @@ fn embed_lang(code: &str) -> Option<&'static str> {
 }
 
 fn load_json(content: &str) -> HashMap<String, String> {
-    serde_json::from_str(content).unwrap_or_default()
+    match serde_json::from_str(content) {
+        Ok(map) => map,
+        Err(e) => {
+            eprintln!("[i18n] 警告: 语言文件 JSON 解析失败: {e}");
+            HashMap::new()
+        }
+    }
 }
 
 fn try_load_file(path: &Path) -> Option<String> {
@@ -151,6 +157,13 @@ pub fn tr(key: &str) -> &str {
         .unwrap_or(key)
 }
 
+/// 从 Cli 中提取语言和语言目录参数并初始化 i18n。
+/// 适用于 apply_patch / rollback_patch 等简单二进制入口。
+pub fn init_from_cli(lang: &str, lang_dir: Option<&std::path::Path>) {
+    let lang = if lang.is_empty() { detect_language() } else { lang.to_string() };
+    init(&lang, lang_dir);
+}
+
 pub fn current_lang() -> &'static str {
     I18N.get().map(|i| i.lang.as_str()).unwrap_or("en")
 }
@@ -253,24 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn test_load_help_text_returns_fallback() {
+    fn test_load_help_text_nonexistent_key_returns_empty() {
         let text = load_help_text("nonexistent.key.xyz");
-        assert!(!text.is_empty() || text.is_empty());
+        assert!(text.is_empty(), "expected empty for nonexistent key, got: {text}");
     }
 
     #[test]
     fn test_detect_language_from_args_before_main() {
         let _ = detect_language_from_args();
-        // Should not panic even when env::args is empty or minimal
-    }
-
-    #[test]
-    fn test_init_with_unsupported_fallback_to_en() {
-        let _lang = current_lang();
-        // init should not panic with unsupported language
-        let _ = I18N.set(I18n {
-            lang: "en".into(),
-            data: load_json(include_str!("../i18n/en.json")),
-        });
     }
 }

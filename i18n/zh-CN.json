@@ -150,6 +150,7 @@
   "manifest.deleted-invalid-sha": "manifest deleted[{0}] old_sha256 格式无效: {1}",
   "manifest.deleted-dir-empty": "manifest deleted_dirs[{0}] 路径为空",
   "manifest.not-found": "未找到补丁清单文件 '{0}'",
+  "rollback.path-unsafe": "安全拒绝: 备份目录 {0} 不在 Patch 目录内",
 
   "fmt.pause-prompt": "\n按 Enter 键退出..."
 }

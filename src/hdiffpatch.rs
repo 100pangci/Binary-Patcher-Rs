@@ -6,22 +6,21 @@ const DEFAULT_THREADS: u32 = 4;
 const MAX_PATCH_THREADS: u32 = 5;
 const MAX_DIFF_THREADS: u32 = 32;
 
-pub fn get_recommended_thread_count() -> u32 {
+fn clamp_thread_count(max: u32) -> u32 {
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(DEFAULT_THREADS as usize);
     (cpu_count.saturating_sub(1))
         .max(1)
-        .min(MAX_PATCH_THREADS as usize) as u32
+        .min(max as usize) as u32
+}
+
+pub fn get_recommended_thread_count() -> u32 {
+    clamp_thread_count(MAX_PATCH_THREADS)
 }
 
 pub fn get_diff_thread_count() -> u32 {
-    let cpu_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(DEFAULT_THREADS as usize);
-    (cpu_count.saturating_sub(1))
-        .max(1)
-        .min(MAX_DIFF_THREADS as usize) as u32
+    clamp_thread_count(MAX_DIFF_THREADS)
 }
 
 pub fn run_hdiffz_mem(

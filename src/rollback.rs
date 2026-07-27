@@ -106,10 +106,7 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
         };
         if should_clean {
             if !backup_root.starts_with(&patch_dir) {
-                anyhow::bail!(
-                    "安全拒绝: 备份目录 {} 不在 Patch 目录内",
-                    backup_root.display()
-                );
+                anyhow::bail!("{}", t!("rollback.path-unsafe", backup_root.display()));
             }
             std::fs::remove_dir_all(&backup_root)?;
             println!("{}", t!("rollback.cleanup-done"));

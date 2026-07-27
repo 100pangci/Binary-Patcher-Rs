@@ -150,6 +150,7 @@
   "manifest.deleted-invalid-sha": "manifest deleted[{0}] の old_sha256 形式が無効です: {1}",
   "manifest.deleted-dir-empty": "manifest deleted_dirs[{0}] のパスが空です",
   "manifest.not-found": "マニフェストファイルが見つかりません: '{0}'",
+  "rollback.path-unsafe": "セキュリティ拒否: バックアップディレクトリ {0} が Patch ディレクトリ内にありません",
 
   "fmt.pause-prompt": "\nEnter キーを押して終了..."
 }

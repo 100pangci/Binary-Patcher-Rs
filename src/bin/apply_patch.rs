@@ -35,13 +35,7 @@ fn main() {
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
-    let lang_dir = cli.lang_dir.as_deref();
-    let lang = if cli.lang.is_empty() {
-        binary_patcher::i18n::detect_language()
-    } else {
-        cli.lang.clone()
-    };
-    binary_patcher::i18n::init(&lang, lang_dir);
+    binary_patcher::i18n::init_from_cli(&cli.lang, cli.lang_dir.as_deref());
 
     if let Err(e) = apply::apply_bundle(&cli.base_dir) {
         eprintln!("{}", t!("error.generic", e));

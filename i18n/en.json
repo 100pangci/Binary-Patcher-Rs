@@ -150,6 +150,7 @@
   "manifest.deleted-invalid-sha": "manifest deleted[{0}] old_sha256 format is invalid: {1}",
   "manifest.deleted-dir-empty": "manifest deleted_dirs[{0}] path is empty",
   "manifest.not-found": "Manifest file not found: {0}",
+  "rollback.path-unsafe": "Security denied: backup directory {0} is not inside the Patch directory",
 
   "fmt.pause-prompt": "\nPress Enter to exit..."
 }
