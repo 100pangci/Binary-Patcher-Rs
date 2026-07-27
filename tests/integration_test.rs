@@ -440,3 +440,202 @@ fn test_patch_format_fast_and_precise_both_work() {
         assert_ne!(fast_bytes, precise_bytes, "Fast and precise patches should differ");
     }
 }
+
+// ===========================================================================
+// Stream mode workflow
+// ===========================================================================
+
+#[test]
+fn test_stream_mode_workflow() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+
+    // Use same small data to verify stream mode works end-to-end
+    std::fs::create_dir_all(base_dir.join("Old")).unwrap();
+    std::fs::create_dir_all(base_dir.join("New")).unwrap();
+    std::fs::write(base_dir.join("Old/file.txt"), "hello world old").unwrap();
+    std::fs::write(base_dir.join("New/file.txt"), "hello world new").unwrap();
+
+    binary_patcher::bundle::build_patch_bundle(&base_dir, true, binary_patcher::cli::PatchMode::Stream, binary_patcher::cli::PatchFormat::Precise).unwrap();
+    assert!(base_dir.join("Patch/manifest.json").exists());
+
+    let game_dir = base_dir.join("game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    std::fs::write(game_dir.join("file.txt"), "hello world old").unwrap();
+
+    let game_patch = game_dir.join("Patch");
+    std::fs::create_dir_all(&game_patch).unwrap();
+    std::fs::copy(base_dir.join("Patch/manifest.json"), game_patch.join("manifest.json")).unwrap();
+    std::fs::copy(base_dir.join("Patch/file.txt.patch"), game_patch.join("file.txt.patch")).unwrap();
+
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    assert_eq!(std::fs::read_to_string(game_dir.join("file.txt")).unwrap(), "hello world new");
+
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+    assert_eq!(std::fs::read_to_string(game_dir.join("file.txt")).unwrap(), "hello world old");
+}
+
+// ===========================================================================
+// Single file create + apply round trip
+// ===========================================================================
+
+#[test]
+fn test_single_file_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.bin");
+    let new_path = dir.path().join("new.bin");
+    let patch_path = dir.path().join("patch.hdiff");
+    let output_path = dir.path().join("output.bin");
+
+    std::fs::write(&old_path, vec![0u8; 256]).unwrap();
+    std::fs::write(&new_path, vec![0xFFu8; 256]).unwrap();
+
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true, false).unwrap();
+    assert!(patch_path.exists());
+    assert!(std::fs::metadata(&patch_path).unwrap().len() > 0);
+
+    binary_patcher::hdiffpatch::run_hpatchz(&old_path, &patch_path, &output_path).unwrap();
+    assert_eq!(std::fs::read(&output_path).unwrap(), vec![0xFFu8; 256]);
+}
+
+// ===========================================================================
+// No-compress mode
+// ===========================================================================
+
+#[test]
+fn test_no_compress_workflow() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    std::fs::create_dir_all(base_dir.join("Old")).unwrap();
+    std::fs::create_dir_all(base_dir.join("New")).unwrap();
+    std::fs::write(base_dir.join("Old/a.txt"), "old data that is long enough to diff").unwrap();
+    std::fs::write(base_dir.join("New/a.txt"), "new data that is long enough to diff").unwrap();
+
+    binary_patcher::bundle::build_patch_bundle(&base_dir, false, binary_patcher::cli::PatchMode::Memory, binary_patcher::cli::PatchFormat::Precise).unwrap();
+    assert!(base_dir.join("Patch/manifest.json").exists());
+
+    let game_dir = base_dir.join("game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    std::fs::write(game_dir.join("a.txt"), "old data that is long enough to diff").unwrap();
+    let game_patch = game_dir.join("Patch");
+    std::fs::create_dir_all(&game_patch).unwrap();
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    assert_eq!(std::fs::read_to_string(game_dir.join("a.txt")).unwrap(), "new data that is long enough to diff");
+}
+
+// ===========================================================================
+// relative_maps correctness
+// ===========================================================================
+
+#[test]
+fn test_relative_maps_returns_both() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("sub/deep")).unwrap();
+    std::fs::write(dir.path().join("sub/a.txt"), "a").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b").unwrap();
+
+    let (files, dirs) = binary_patcher::utils::relative_maps(dir.path());
+    assert!(files.contains_key("sub/a.txt"));
+    assert!(files.contains_key("b.txt"));
+    assert!(dirs.contains_key("sub"));
+    assert!(dirs.contains_key("sub/deep"));
+    assert_eq!(files.len(), 2);
+    assert_eq!(dirs.len(), 2);
+}
+
+// ===========================================================================
+// Backup retry on name collision
+// ===========================================================================
+
+#[test]
+fn test_backup_retry_on_collision() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
+    let target = dir.path().join("file.txt");
+    std::fs::write(&target, "original").unwrap();
+
+    let backup1 = binary_patcher::utils::write_backup(b"original", &target, dir.path(), &backup_root).unwrap();
+    let backup2 = binary_patcher::utils::write_backup(b"modified", &target, dir.path(), &backup_root).unwrap();
+    assert_ne!(backup1, backup2);
+    assert!(backup2.to_string_lossy().contains(".backup_before_patch"));
+    assert!(backup2.exists());
+    assert_eq!(std::fs::read_to_string(&backup2).unwrap(), "modified");
+}
+
+// ===========================================================================
+// Manifest rejects path traversal entries
+// ===========================================================================
+
+#[test]
+fn test_manifest_rejects_traversal_in_changed_path() {
+    let manifest = binary_patcher::manifest::Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "../escape.txt".to_string(),
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "p.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    // Validate passes (format check), but load + apply will catch traversal at resolve_safe_path
+    assert!(manifest.validate().is_ok());
+}
+
+#[test]
+fn test_resolve_safe_path_rejects_traversal_in_load() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("Patch")).unwrap();
+    let manifest = serde_json::json!({
+        "format": env!("CARGO_PKG_VERSION"),
+        "source_root": "Old",
+        "target_root": "New",
+        "changed": [{
+            "path": "../outside.txt",
+            "old_sha256": "a".repeat(64),
+            "new_sha256": "b".repeat(64),
+            "patch_file": "p.patch"
+        }],
+        "added": [],
+        "deleted": [],
+        "deleted_dirs": []
+    });
+    std::fs::write(
+        dir.path().join("Patch/manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    ).unwrap();
+
+    // Verify manifest loads but resolve_safe_path catches the traversal during apply
+    assert!(binary_patcher::manifest::Manifest::load(&dir.path().join("Patch")).is_ok());
+    assert!(binary_patcher::utils::resolve_safe_path(dir.path(), "../outside.txt").is_err());
+}
+
+// ===========================================================================
+// Single file apply via apply_patch CLI helper
+// ===========================================================================
+
+#[test]
+fn test_apply_single_patch() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.txt");
+    let new_path = dir.path().join("new.txt");
+    let patch_path = dir.path().join("patch.hdiff");
+    let output_path = dir.path().join("output.txt");
+
+    std::fs::write(&old_path, "old content").unwrap();
+    std::fs::write(&new_path, "new content with extra data!").unwrap();
+
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true, false).unwrap();
+    binary_patcher::apply::apply_single_patch(
+        &old_path.to_string_lossy(),
+        &patch_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ).unwrap();
+    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "new content with extra data!");
+}

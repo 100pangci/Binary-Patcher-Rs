@@ -46,7 +46,7 @@ pub fn sha256_of_bytes(data: &[u8]) -> String {
 }
 
 fn sha256_hex(digest: ring::digest::Digest) -> String {
-    digest.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(digest.as_ref())
 }
 
 pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
@@ -71,28 +71,30 @@ pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
 }
 
 pub fn relative_dir_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
-    let mut dirs = std::collections::BTreeMap::new();
-    let base = base_dir.to_path_buf();
-    for entry in WalkDir::new(base_dir).follow_links(false).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_dir()
-            && let Ok(rel) = entry.path().strip_prefix(&base)
-        {
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if !rel_str.is_empty() {
-                    dirs.insert(rel_str, entry.path().to_path_buf());
-                }
-            }
-    }
+    let (_, dirs) = relative_maps(base_dir);
     dirs
 }
 
-pub fn relative_file_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
+pub fn relative_maps(base_dir: &Path) -> (std::collections::BTreeMap<String, PathBuf>, std::collections::BTreeMap<String, PathBuf>) {
     let mut files = std::collections::BTreeMap::new();
-    for path in iter_files(base_dir) {
-        if let Ok(rel) = path.strip_prefix(base_dir) {
-            files.insert(rel.to_string_lossy().replace('\\', "/"), path);
+    let mut dirs = std::collections::BTreeMap::new();
+    let base = base_dir.to_path_buf();
+    for entry in WalkDir::new(base_dir).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+        if let Ok(rel) = entry.path().strip_prefix(&base) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if rel_str.is_empty() { continue; }
+            if entry.file_type().is_file() {
+                files.insert(rel_str, entry.path().to_path_buf());
+            } else if entry.file_type().is_dir() {
+                dirs.insert(rel_str, entry.path().to_path_buf());
+            }
         }
     }
+    (files, dirs)
+}
+
+pub fn relative_file_map(base_dir: &Path) -> std::collections::BTreeMap<String, PathBuf> {
+    let (files, _) = relative_maps(base_dir);
     files
 }
 

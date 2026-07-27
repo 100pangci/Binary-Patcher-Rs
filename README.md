@@ -13,7 +13,8 @@
 - **整目录打包** — 对比 `Old/` 与 `New/`，自动生成 `manifest.json` + 补丁文件 + 新增文件
 - **一键应用** — `apply_patch` 读取清单、校验 SHA256、备份原文件、执行补丁
 - **一键回滚** — `rollback_patch` 恢复备份、删除新增文件
-- **低内存流式** — `--stream` 强制流式模式，降低内存占用，适合大文件或内存受限环境
+- **自适应内存/流式** — `--mode auto` 优先内存模式，OOM 时按文件自动回退流式
+- **低内存流式** — `--mode stream` 强制流式模式，降低内存占用，适合大文件或内存受限环境
 - **安全保障**：
   - 路径穿越防护（拒绝 `../` 逃逸）
   - 补丁前后 SHA256 校验
@@ -129,24 +130,29 @@ binary_patcher
 
 ### `apply_patch`
 
-```sh
-./apply_patch
-```
+| 参数 | 说明 |
+|------|------|
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录（需包含 `Patch/`） |
 
 ### `rollback_patch`
 
-```sh
-./rollback_patch
-```
+| 参数 | 说明 |
+|------|------|
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录（需包含 `Patch/`） |
 
 ## 项目结构
 
 ```
 .
 ├── build.rs                 # 构建脚本：自动下载并编译 HDiffPatch C 库
+├── e2e.ps1                  # 端到端 CLI 冒烟测试
+├── LICENSE                  # MPL-2.0 许可证
+├── README.md                # 中文说明
+├── README.en.md             # English
+├── README.ja.md             # 日本語
 ├── .github/workflows/
-│   ├── ci.yml               # CI: cargo check + test（多平台）
-│   └── build.yml            # Release: lint → test → 构建 → GitHub Release
+│   ├── ci.yml               # CI: cargo check（Linux）+ test（多平台）
+│   └── build.yml            # Release: 构建 → 打包 → GitHub Release
 ├── scripts/
 │   ├── build.ps1            # Windows 一键构建 + 打包
 │   └── gen_test_data.ps1    # 测试数据生成脚本
@@ -168,7 +174,7 @@ binary_patcher
 │   ├── apply.rs             # 补丁应用逻辑
 │   └── rollback.rs          # 补丁回滚逻辑
 └── tests/
-    └── integration_test.rs  # 单元测试 + 全流程集成测试
+    └── integration_test.rs  # 单元测试 + 全流程集成测试（31 项）
 ```
 
 ## 安全
@@ -192,8 +198,11 @@ binary_patcher
 # 构建
 cargo build
 
-# 运行测试
+# 运行所有测试（单元 + 集成）
 cargo test
+
+# 仅运行集成测试（输出详细日志）
+cargo test --test integration_test -- --nocapture
 
 # 发布构建
 cargo build --release
@@ -215,8 +224,8 @@ cargo build --release
 
 | 工作流 | 触发条件 | 内容 |
 |--------|---------|------|
-| **CI** | push / PR | `cargo check` + `cargo test`（Windows / Linux / macOS） |
-| **Build & Release** | tag `v*` / 手动 | check → test → `cargo build --release` → 下载 HDiffPatch → 打包 → 发布到 GitHub Release |
+| **CI** | push / PR | `cargo check`（Linux）+ `cargo test`（Windows / Linux / macOS） |
+| **Build & Release** | tag `v*` / 手动 | `cargo build --release` → 下载 HDiffPatch 工具 → 打包 → 发布到 GitHub Release |
 
 ### TODO
 
@@ -229,13 +238,14 @@ cargo build --release
 | 语言 | Rust（edition 2024） |
 | CLI 框架 | clap（derive 模式） |
 | 序列化 | serde + serde_json |
-| 哈希 | SHA-256（ring crate，汇编优化） |
+| 哈希 | SHA-256（ring + hex，汇编优化） |
 | 目录遍历 | walkdir |
 | 时间处理 | chrono |
-| 终端检测 | atty |
+| 终端检测 | std::io::IsTerminal（标准库） |
 | 错误处理 | anyhow |
 | 构建依赖 | cc（编译 C/C++）、reqwest + zip（自动下载 HDiffPatch） |
 | 补丁引擎 | [HDiffPatch](https://github.com/sisong/HDiffPatch)（FFI 静态链接） |
+| Hex 编码 | hex |
 
 ## 许可证
 

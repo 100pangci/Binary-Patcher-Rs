@@ -2,7 +2,7 @@ use crate::cli::PatchMode;
 use crate::cli::PatchFormat;
 use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{Manifest, ChangedEntry, AddedEntry, DeletedEntry, INSTRUCTIONS_NAME};
-use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_file_map, relative_dir_map, ensure_parent_dir};
+use crate::utils::{format_size, sha256_of_bytes, sha256_of_file, relative_maps, ensure_parent_dir};
 use std::path::Path;
 
 pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMode, format: PatchFormat) -> anyhow::Result<()> {
@@ -16,8 +16,8 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
     }
     std::fs::create_dir_all(&patch_dir)?;
 
-    let old_files = relative_file_map(&old_dir);
-    let new_files = relative_file_map(&new_dir);
+    let (old_files, old_dirs) = relative_maps(&old_dir);
+    let (new_files, new_dirs) = relative_maps(&new_dir);
 
     let fast_format = matches!(format, PatchFormat::Fast);
 
@@ -147,8 +147,7 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
         }
     }
 
-    let old_dirs = relative_dir_map(&old_dir);
-    let new_dirs = relative_dir_map(&new_dir);
+    // old_dirs and new_dirs already populated from relative_maps above
     for rel_path in old_dirs.keys() {
         if !new_dirs.contains_key(rel_path) {
             manifest.deleted_dirs.push(rel_path.clone());

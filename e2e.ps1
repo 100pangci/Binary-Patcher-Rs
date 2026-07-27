@@ -1,6 +1,6 @@
 ﻿#Requires -Version 7
 # binary_patcher 一键全流程测试
-# 双击或在项目根目录执行: ./test.ps1
+# 双击或在项目根目录执行: ./e2e.ps1
 param([switch]$SkipBuild, [switch]$Quick)
 
 $ErrorActionPreference = 'Continue'
@@ -125,7 +125,7 @@ Remove-Item $t1 -Recurse -Force -EA SilentlyContinue
 New-Item -ItemType Directory -Path $t1 -Force | Out-Null
 Copy-Item $old "$t1\Old" -Recurse
 Copy-Item $new "$t1\New" -Recurse
-$LASTEXITCODE = 0; $bout = cmd /c "$bp bundle --base-dir $t1" 2>&1
+$LASTEXITCODE = 0; $bout = "`n" | cmd /c "$bp bundle --base-dir $t1" 2>&1
 $patchFiles = @(Get-ChildItem "$t1\Patch\*.patch" -Name)
 $manifest = if (Test-Path "$t1\Patch\manifest.json") { Get-Content "$t1\Patch\manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
 $chg = if ($manifest) { $manifest.changed.Count } else { 0 }
@@ -143,13 +143,13 @@ if (-not $Quick) {
     Write-Host "`n[4a/8] Stream 模式..." -F Yellow
     $t2 = "$ws\t2"; New-Item -ItemType Directory -Path $t2 -Force | Out-Null
     Copy-Item $old "$t2\Old" -Recurse; Copy-Item $new "$t2\New" -Recurse
-    cmd /c "$bp --mode stream bundle --base-dir $t2" 2>&1 | Out-Null
+    "`n" | cmd /c "$bp --mode stream bundle --base-dir $t2" 2>&1 | Out-Null
     P 'Stream 模式'
 
     Write-Host "`n[4b/8] Fast 格式..." -F Yellow
     $t3 = "$ws\t3"; New-Item -ItemType Directory -Path $t3 -Force | Out-Null
     Copy-Item $old "$t3\Old" -Recurse; Copy-Item $new "$t3\New" -Recurse
-    cmd /c "$bp --format fast bundle --base-dir $t3" 2>&1 | Out-Null
+    "`n" | cmd /c "$bp --format fast bundle --base-dir $t3" 2>&1 | Out-Null
     P 'Fast 格式'
 } else {
     Write-Host "`n[4/8] Stream/Fast 跳过 (Quick 模式)" -F DarkGray
@@ -164,7 +164,7 @@ Remove-Item $game -Recurse -Force -EA SilentlyContinue
 New-Item -ItemType Directory -Path $game -Force | Out-Null
 Copy-Item "$old\*" $game -Recurse
 Copy-Item -LiteralPath "$t1\Patch" "$game\Patch" -Recurse
-cmd /c "$apply --base-dir $game" 2>&1 | Out-Null
+"`n" | cmd /c "$apply --base-dir $game" 2>&1 | Out-Null
 Start-Sleep -Milliseconds 300
 
 if (DirIdentical $new $game) { P 'apply: 逐文件 SHA256 全部一致' }
@@ -174,7 +174,7 @@ else { F 'apply: 文件校验失败' }
 # 6. 回滚
 # ============================================================
 Write-Host "`n[6/8] 回滚..." -F Yellow
-cmd /c "$roll --base-dir $game" 2>&1 | Out-Null
+"y`n`n" | cmd /c "$roll --base-dir $game" 2>&1 | Out-Null
 Start-Sleep -Milliseconds 300
 
 if (DirIdentical $old $game) { P 'rollback: 完全恢复到 Old 状态' }
@@ -188,23 +188,23 @@ $s = "$ws\single"; New-Item -ItemType Directory -Path $s -Force | Out-Null
 $of = "$s\old.bin"; $nf = "$s\new.bin"
 WriteBin $of (RandBytes 65536)
 WriteBin $nf (RandBytes 65536)
-cmd /c "$bp create $of $nf $s\p.hdiff"  2>&1 | Out-Null
-cmd /c "$bp apply  $of $s\p.hdiff $s\out.bin" 2>&1 | Out-Null
+"`n" | cmd /c "$bp create $of $nf $s\p.hdiff"  2>&1 | Out-Null
+"`n" | cmd /c "$bp apply  $of $s\p.hdiff $s\out.bin" 2>&1 | Out-Null
 if ((HashFile $nf) -eq (HashFile "$s\out.bin")) { P '单文件 create+apply' }
 else { F '单文件' }
 
 if (-not $Quick) {
-    cmd /c "$bp --no-compress create $of $nf $s\p_nc.hdiff"  2>&1 | Out-Null
-    cmd /c "$bp apply $of $s\p_nc.hdiff $s\out_nc.bin" 2>&1 | Out-Null
+    "`n" | cmd /c "$bp --no-compress create $of $nf $s\p_nc.hdiff"  2>&1 | Out-Null
+    "`n" | cmd /c "$bp apply $of $s\p_nc.hdiff $s\out_nc.bin" 2>&1 | Out-Null
     if ((HashFile $nf) -eq (HashFile "$s\out_nc.bin")) { P '--no-compress' } else { F '--no-compress' }
 
-    cmd /c "$bp --format fast create $of $nf $s\p_f.hdiff"  2>&1 | Out-Null
-    cmd /c "$bp apply $of $s\p_f.hdiff $s\out_f.bin" 2>&1 | Out-Null
+    "`n" | cmd /c "$bp --format fast create $of $nf $s\p_f.hdiff"  2>&1 | Out-Null
+    "`n" | cmd /c "$bp apply $of $s\p_f.hdiff $s\out_f.bin" 2>&1 | Out-Null
     if ((HashFile $nf) -eq (HashFile "$s\out_f.bin")) { P '--format fast' } else { F '--format fast' }
 
     $winit = "$ws\winit"; New-Item -ItemType Directory -Path $winit -Force | Out-Null
     Push-Location $winit
-    try { cmd /c "$bp" 2>&1 | Out-Null; if ((Test-Path Old) -and (Test-Path New) -and (Test-Path Patch)) { P '工作区初始化' } else { F '工作区初始化' } }
+    try { "`n" | cmd /c "$bp" 2>&1 | Out-Null; if ((Test-Path Old) -and (Test-Path New) -and (Test-Path Patch)) { P '工作区初始化' } else { F '工作区初始化' } }
     finally { Pop-Location }
 
     [string[]]$psizes = Get-ChildItem "$s\*.hdiff" | ForEach-Object { "$($_.Name): $($_.Length)" }
@@ -216,7 +216,7 @@ if (-not $Quick) {
 # ============================================================
 Write-Host "`n[8/8] 单元测试 (cargo test)..." -F Yellow
 Push-Location $root
-$testOut = & cargo test --release 2>&1
+$testOut = "n`n" | & cargo test --release 2>&1
 Pop-Location
 $testStr = $testOut -join "`n"
 $passed = 0; $failed = 0

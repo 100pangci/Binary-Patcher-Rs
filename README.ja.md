@@ -131,11 +131,19 @@ binary_patcher
 
 ### `apply_patch`
 
+| 引数 | 説明 |
+|------|------|
+| `--base-dir <パス>` | 旧バージョンのルートディレクトリ（`Patch/` を含む必要あり）、デフォルトは `.` |
+
 ```sh
 ./apply_patch
 ```
 
 ### `rollback_patch`
+
+| 引数 | 説明 |
+|------|------|
+| `--base-dir <パス>` | 旧バージョンのルートディレクトリ（`Patch/` を含む必要あり）、デフォルトは `.` |
 
 ```sh
 ./rollback_patch
@@ -146,9 +154,14 @@ binary_patcher
 ```
 .
 ├── build.rs                 # ビルドスクリプト：HDiffPatch C ライブラリを自動DL・コンパイル
+├── e2e.ps1                  # エンドツーエンド CLI テスト
+├── LICENSE                  # MPL-2.0
+├── README.md                # 中文
+├── README.en.md             # English
+├── README.ja.md             # 日本語
 ├── .github/workflows/
-│   ├── ci.yml               # CI: cargo check + test（マルチプラットフォーム）
-│   └── build.yml            # Release: lint → test → ビルド → GitHub Release
+│   ├── ci.yml               # CI: cargo check（Linux）+ test（マルチプラットフォーム）
+│   └── build.yml            # Release: ビルド → パッケージ → GitHub Release
 ├── scripts/
 │   ├── build.ps1            # Windows ワンクリックビルド + パッケージ
 │   └── gen_test_data.ps1    # テストデータ生成スクリプト
@@ -170,7 +183,7 @@ binary_patcher
 │   ├── apply.rs             # バンドル適用ロジック
 │   └── rollback.rs          # バンドルロールバックロジック
 └── tests/
-    └── integration_test.rs  # ユニット + 全フロー統合テスト
+    └── integration_test.rs  # ユニット + 全フロー統合テスト（31 項目）
 ```
 
 ## セキュリティ
@@ -194,8 +207,11 @@ binary_patcher
 # ビルド
 cargo build
 
-# テスト実行
+# 全テスト実行（ユニット + 統合）
 cargo test
+
+# 統合テストのみ詳細出力
+cargo test --test integration_test -- --nocapture
 
 # リリースビルド
 cargo build --release
@@ -217,8 +233,8 @@ cargo build --release
 
 | ワークフロー | トリガー | 内容 |
 |-------------|----------|------|
-| **CI** | push / PR | `cargo check` + `cargo test`（Windows / Linux / macOS） |
-| **Build & Release** | tag `v*` / 手動 | check → test → `cargo build --release` → HDiffPatch ダウンロード → パッケージ → GitHub Release に公開 |
+| **CI** | push / PR | `cargo check`（Linux）+ `cargo test`（Windows / Linux / macOS） |
+| **Build & Release** | tag `v*` / 手動 | `cargo build --release` → HDiffPatch ツールをダウンロード → パッケージ → GitHub Release に公開 |
 
 ### TODO
 
@@ -231,10 +247,10 @@ cargo build --release
 | 言語 | Rust（edition 2024） |
 | CLI フレームワーク | clap（derive モード） |
 | シリアライズ | serde + serde_json |
-| ハッシュ | SHA-256（ring crate、アセンブリ最適化） |
+| ハッシュ | SHA-256（ring + hex、アセンブリ最適化） |
 | ディレクトリ走査 | walkdir |
 | 時間処理 | chrono |
-| TTY 検出 | atty |
+| TTY 検出 | std::io::IsTerminal（標準ライブラリ） |
 | エラーハンドリング | anyhow |
 | ビルド依存 | cc（C/C++ コンパイル）、reqwest + zip（HDiffPatch 自動DL） |
 | パッチエンジン | [HDiffPatch](https://github.com/sisong/HDiffPatch)（FFI 静的リンク） |

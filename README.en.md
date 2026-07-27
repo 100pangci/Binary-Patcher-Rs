@@ -131,11 +131,19 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 
 ### `apply_patch`
 
+| Argument | Description |
+|----------|-------------|
+| `--base-dir <path>` | Root directory of the old version (must contain `Patch/`), defaults to `.` |
+
 ```sh
 ./apply_patch
 ```
 
 ### `rollback_patch`
+
+| Argument | Description |
+|----------|-------------|
+| `--base-dir <path>` | Root directory of the old version (must contain `Patch/`), defaults to `.` |
 
 ```sh
 ./rollback_patch
@@ -146,9 +154,14 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 ```
 .
 ├── build.rs                 # Build script: auto-download & compile HDiffPatch C library
+├── e2e.ps1                  # End-to-end CLI smoke test
+├── LICENSE                  # MPL-2.0
+├── README.md                # 中文
+├── README.en.md             # English
+├── README.ja.md             # 日本語
 ├── .github/workflows/
-│   ├── ci.yml               # CI: cargo check + test (multi-platform)
-│   └── build.yml            # Release: lint → test → build → GitHub Release
+│   ├── ci.yml               # CI: cargo check (Linux) + test (multi-platform)
+│   └── build.yml            # Release: build → package → GitHub Release
 ├── scripts/
 │   ├── build.ps1            # Windows one-click build + package
 │   └── gen_test_data.ps1    # Test data generator
@@ -170,7 +183,7 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 │   ├── apply.rs             # Bundle application logic
 │   └── rollback.rs          # Bundle rollback logic
 └── tests/
-    └── integration_test.rs  # Unit + full-workflow integration tests
+    └── integration_test.rs  # Unit + full-workflow integration tests (31 tests)
 ```
 
 ## Security
@@ -194,8 +207,11 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 # Build
 cargo build
 
-# Run tests
+# Run all tests (unit + integration)
 cargo test
+
+# Run only integration tests with verbose output
+cargo test --test integration_test -- --nocapture
 
 # Release build
 cargo build --release
@@ -217,8 +233,8 @@ This project uses GitHub Actions:
 
 | Workflow | Trigger | Contents |
 |----------|---------|----------|
-| **CI** | push / PR | `cargo check` + `cargo test` (Windows / Linux / macOS) |
-| **Build & Release** | tag `v*` / manual | check → test → `cargo build --release` → download HDiffPatch → package → publish to GitHub Release |
+| **CI** | push / PR | `cargo check` (Linux) + `cargo test` (Windows / Linux / macOS) |
+| **Build & Release** | tag `v*` / manual | `cargo build --release` → download HDiffPatch tools → package → publish to GitHub Release |
 
 ### TODO
 
@@ -231,10 +247,10 @@ This project uses GitHub Actions:
 | Language | Rust (edition 2024) |
 | CLI framework | clap (derive) |
 | Serialization | serde + serde_json |
-| Hashing | SHA-256 (ring crate, assembly-optimized) |
+| Hashing | SHA-256 (ring + hex, assembly-optimized) |
 | Directory walk | walkdir |
 | Time handling | chrono |
-| TTY detection | atty |
+| TTY detection | std::io::IsTerminal (stdlib) |
 | Error handling | anyhow |
 | Build deps | cc (C/C++ compile), reqwest + zip (auto-download HDiffPatch) |
 | Patch engine | [HDiffPatch](https://github.com/sisong/HDiffPatch) (FFI static link) |
