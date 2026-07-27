@@ -65,7 +65,12 @@ pub fn create_patch(
         if !out_patch.is_null() {
             unsafe { hdiffpatch_free(out_patch as *mut c_void); }
         }
-        return Err("创建补丁失败".to_string());
+        let msg = match ret {
+            -8 => "内存不足，无法分配补丁缓冲区",
+            -1 => "创建补丁失败或内部异常",
+            _ => "创建补丁失败",
+        };
+        return Err(format!("{msg} (错误码: {ret})"));
     }
 
     let patch = unsafe {

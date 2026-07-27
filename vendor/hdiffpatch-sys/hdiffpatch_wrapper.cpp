@@ -85,7 +85,7 @@ int hdiffpatch_create(
         }
         *out_patch_size = diff.size();
         *out_patch = (unsigned char*)std::malloc(diff.size());
-        if (!*out_patch) return -1;
+        if (!*out_patch) return -8;
         std::memcpy(*out_patch, diff.data(), diff.size());
         return 0;
     } catch (...) {
