@@ -2,6 +2,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <vector>
+#include <exception>
+#include <cstdio>
 
 #include "libHDiffPatch/HDiff/diff.h"
 #include "libHDiffPatch/HPatch/patch.h"
@@ -91,7 +93,8 @@ int hdiffpatch_create(
         if (!*out_patch) return -8;
         std::memcpy(*out_patch, diff.data(), diff.size());
         return 0;
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "hdiffpatch_create exception: %s\n", e.what());
         return -1;
     }
 }
@@ -161,7 +164,8 @@ int hdiffpatch_create_file(
                 &mtsets
             );
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "hdiffpatch_create_file exception: %s\n", e.what());
         ret = -1;
     }
 
@@ -263,7 +267,8 @@ int hdiffpatch_apply(
             }
             return 0;
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "hdiffpatch_apply exception: %s\n", e.what());
         if (*out_new_data) {
             std::free(*out_new_data);
             *out_new_data = nullptr;
@@ -360,7 +365,8 @@ int hdiffpatch_apply_file(
             outStream.base.write(&outStream.base, 0, new_data.data(),
                                  new_data.data() + new_data.size());
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "hdiffpatch_apply_file exception: %s\n", e.what());
         ret = -4;
     }
 

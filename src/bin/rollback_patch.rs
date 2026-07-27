@@ -1,12 +1,11 @@
 use binary_patcher::fmt::pause_if_needed;
 use binary_patcher::rollback;
 use binary_patcher::t;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "rollback_patch")]
-#[command(about = "回滚整包补丁")]
 struct Cli {
     #[arg(
         long = "base-dir",
@@ -30,7 +29,10 @@ struct Cli {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let about = binary_patcher::i18n::load_help_text("cli.about-rollback");
+    let cmd = Cli::command().about(about);
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     let lang_dir = cli.lang_dir.as_deref();
     let lang = if cli.lang.is_empty() {

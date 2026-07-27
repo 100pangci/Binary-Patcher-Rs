@@ -223,7 +223,7 @@ fn apply_changed_files(
         println!("{}", t!("apply.backed-up", backup_name));
 
         let patch_data = std::fs::read(&patch_file)
-            .map_err(|e| anyhow::anyhow!("{}", format!("{}: {}", patch_file.display(), e)))?;
+            .map_err(|e| anyhow::anyhow!("{}: {}", patch_file.display(), e))?;
 
         let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 

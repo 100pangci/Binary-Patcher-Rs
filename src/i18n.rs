@@ -72,6 +72,39 @@ fn detect_system_locale() -> Option<String> {
     None
 }
 
+/// 从原始 CLI 参数中解析 --lang 值（在 clap 解析之前调用）。
+pub fn detect_language_from_args() -> Option<String> {
+    let mut args = std::env::args();
+    let _prog = args.next()?;
+    while let Some(arg) = args.next() {
+        if arg == "--lang" {
+            return args.next().map(|v| normalize_lang(&v));
+        }
+        if let Some(val) = arg.strip_prefix("--lang=")
+            && !val.is_empty()
+        {
+            return Some(normalize_lang(val));
+        }
+    }
+    None
+}
+
+/// 在 i18n 初始化之前加载指定 key 的翻译文本（用于 CLI help）。
+/// 优先使用 `--lang` 参数指定的语言，否则检测系统语言。
+pub fn load_help_text(key: &str) -> String {
+    let lang = detect_language_from_args()
+        .or_else(|| {
+            let d = detect_language();
+            if d == "en" { None } else { Some(d) }
+        })
+        .unwrap_or_else(|| "en".to_string());
+    embed_lang(&lang)
+        .or_else(|| embed_lang("en"))
+        .map(load_json)
+        .and_then(|map| map.get(key).cloned())
+        .unwrap_or_default()
+}
+
 pub fn detect_language() -> String {
     if let Ok(lang) = std::env::var("BINARY_PATCHER_LANG") {
         let lang = lang.trim().to_lowercase();

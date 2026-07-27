@@ -281,9 +281,9 @@ fn create_patch_stream(
 
 fn try_read_old_new(old: &Path, new: &Path) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let old_data = std::fs::read(old)
-        .with_context(|| format!("{}", t!("bundle.failed-read-old", old.display())))?;
+        .with_context(|| t!("bundle.failed-read-old", old.display()))?;
     let new_data = std::fs::read(new)
-        .with_context(|| format!("{}", t!("bundle.failed-read-new", new.display())))?;
+        .with_context(|| t!("bundle.failed-read-new", new.display()))?;
     Ok((old_data, new_data))
 }
 

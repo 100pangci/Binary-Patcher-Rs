@@ -153,7 +153,11 @@ binary_patcher
 
 ```
 .
-├── build.rs                 # ビルドスクリプト：HDiffPatch C ライブラリを自動DL・コンパイル
+├── build.rs                 # ビルドエントリ（build_script/ に委譲）
+├── build_script/            # ビルドモジュール
+│   ├── mod.rs               # ビルドオーケストレーション
+│   ├── download.rs          # HDiffPatch / zlib を自動ダウンロード
+│   └── compile.rs           # C/C++ コンパイル
 ├── e2e.ps1                  # エンドツーエンド CLI テスト
 ├── LICENSE                  # MPL-2.0
 ├── README.md                # 中文
@@ -171,19 +175,23 @@ binary_patcher
 ├── src/
 │   ├── lib.rs               # ライブラリルート、全モジュールを公開
 │   ├── main.rs              # binary_patcher エントリポイント
+│   ├── backup.rs            # ファイルバックアップと復元
 │   ├── bin/
 │   │   ├── apply_patch.rs   # apply_patch エントリポイント
 │   │   └── rollback_patch.rs# rollback_patch エントリポイント
 │   ├── cli.rs               # コマンドライン引数解析（clap）
 │   ├── ffi.rs               # HDiffPatch C ライブラリ FFI バインディング
+│   ├── fmt.rs               # フォーマットユーティリティ（ファイルサイズ、端末一時停止）
+│   ├── fs.rs                # ファイルシステム走査とマッピング
+│   ├── hash.rs              # SHA256 ハッシュ計算
 │   ├── hdiffpatch.rs        # パッチ作成・適用のラッパー
-│   ├── utils.rs             # SHA256、ファイル操作、パス安全性、バックアップ
 │   ├── manifest.rs          # マニフェスト型、JSON シリアライズ、検証
+│   ├── path.rs              # 安全なパス解決とトラバーサル対策
 │   ├── bundle.rs            # バンドル作成（Old/New → Patch）
 │   ├── apply.rs             # バンドル適用ロジック
 │   └── rollback.rs          # バンドルロールバックロジック
 └── tests/
-    └── integration_test.rs  # ユニット + 全フロー統合テスト（31 項目）
+    └── integration_test.rs  # ユニット + 全フロー統合テスト（38 項目）
 ```
 
 ## セキュリティ

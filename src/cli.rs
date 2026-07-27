@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "binary_patcher")]
-#[command(about = "一个用于创建和应用二进制文件补丁的工具", long_about = None)]
 pub struct Cli {
     #[arg(
         long = "copy-scripts",

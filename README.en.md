@@ -153,7 +153,11 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 
 ```
 .
-├── build.rs                 # Build script: auto-download & compile HDiffPatch C library
+├── build.rs                 # Build entry (delegates to build_script/)
+├── build_script/            # Build modules
+│   ├── mod.rs               # Build orchestration
+│   ├── download.rs          # Auto-download HDiffPatch / zlib
+│   └── compile.rs           # C/C++ compilation
 ├── e2e.ps1                  # End-to-end CLI smoke test
 ├── LICENSE                  # MPL-2.0
 ├── README.md                # 中文
@@ -171,19 +175,23 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 ├── src/
 │   ├── lib.rs               # Library root, re-exports all modules
 │   ├── main.rs              # binary_patcher entry point
+│   ├── backup.rs            # File backup and restore
 │   ├── bin/
 │   │   ├── apply_patch.rs   # apply_patch entry point
 │   │   └── rollback_patch.rs# rollback_patch entry point
 │   ├── cli.rs               # CLI argument parsing (clap)
 │   ├── ffi.rs               # HDiffPatch C library FFI bindings
+│   ├── fmt.rs               # Formatting utilities (file size, terminal pause)
+│   ├── fs.rs                # Filesystem traversal and mapping
+│   ├── hash.rs              # SHA256 hashing
 │   ├── hdiffpatch.rs        # Patch create/apply invocation wrapper
-│   ├── utils.rs             # SHA256, file ops, path safety, backup
 │   ├── manifest.rs          # Manifest type, JSON serialization, validation
+│   ├── path.rs              # Safe path resolution and traversal protection
 │   ├── bundle.rs            # Bundle creation (Old/New → Patch)
 │   ├── apply.rs             # Bundle application logic
 │   └── rollback.rs          # Bundle rollback logic
 └── tests/
-    └── integration_test.rs  # Unit + full-workflow integration tests (31 tests)
+    └── integration_test.rs  # Unit + full-workflow integration tests (38 tests)
 ```
 
 ## Security

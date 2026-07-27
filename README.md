@@ -144,7 +144,11 @@ binary_patcher
 
 ```
 .
-├── build.rs                 # 构建脚本：自动下载并编译 HDiffPatch C 库
+├── build.rs                 # 构建入口（委托 build_script/）
+├── build_script/            # 构建模块
+│   ├── mod.rs               # 构建编排
+│   ├── download.rs          # 自动下载 HDiffPatch / zlib
+│   └── compile.rs           # C/C++ 编译
 ├── e2e.ps1                  # 端到端 CLI 冒烟测试
 ├── LICENSE                  # MPL-2.0 许可证
 ├── README.md                # 中文说明
@@ -162,19 +166,23 @@ binary_patcher
 ├── src/
 │   ├── lib.rs               # 库入口，公开所有模块
 │   ├── main.rs              # binary_patcher 入口
+│   ├── backup.rs            # 文件备份与恢复
 │   ├── bin/
 │   │   ├── apply_patch.rs   # apply_patch 入口
 │   │   └── rollback_patch.rs# rollback_patch 入口
 │   ├── cli.rs               # 命令行参数解析（clap）
 │   ├── ffi.rs               # HDiffPatch C 库 FFI 绑定
+│   ├── fmt.rs               # 格式化工具（文件大小、终端暂停）
+│   ├── fs.rs                # 文件系统遍历与映射
+│   ├── hash.rs              # SHA256 哈希计算
 │   ├── hdiffpatch.rs        # 补丁创建/应用调用封装
-│   ├── utils.rs             # SHA256、文件操作、路径安全、备份
 │   ├── manifest.rs          # Manifest 类型、JSON 序列化、校验
+│   ├── path.rs              # 安全路径解析与穿越防护
 │   ├── bundle.rs            # 整目录打包（Old/New → Patch）
 │   ├── apply.rs             # 补丁应用逻辑
 │   └── rollback.rs          # 补丁回滚逻辑
 └── tests/
-    └── integration_test.rs  # 单元测试 + 全流程集成测试（31 项）
+    └── integration_test.rs  # 单元测试 + 全流程集成测试（38 项）
 ```
 
 ## 安全

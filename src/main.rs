@@ -5,7 +5,7 @@ use binary_patcher::fmt::{format_size, pause_if_needed};
 use binary_patcher::hdiffpatch;
 use binary_patcher::path::ensure_parent_dir;
 use binary_patcher::t;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use std::path::Path;
 
 fn create_single_patch(
@@ -42,7 +42,10 @@ fn create_single_patch(
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let about = binary_patcher::i18n::load_help_text("cli.about-bp");
+    let cmd = Cli::command().about(about);
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     let lang_dir = cli.lang_dir.as_deref();
     let lang = if cli.lang.is_empty() {
