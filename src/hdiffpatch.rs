@@ -122,19 +122,19 @@ pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> an
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-    Err(e) => {
-        if thread_count > 1 {
-            eprintln!("注意: 多线程应用补丁失败，回退单线程重试 ({e})");
-            let old_data = std::fs::read(old_file)
-                .map_err(|e2| anyhow::anyhow!("读取旧文件失败 {}: {e2}", old_file.display()))?;
-            let new_data = ffi::apply_patch(&old_data, &patch_data, 1)
-                .map_err(|e2| anyhow::anyhow!("单线程重试也失败: {e2}"))?;
-            std::fs::write(output_file, &new_data)
-                .map_err(|e2| anyhow::anyhow!("写入输出文件失败 {}: {e2}", output_file.display()))?;
-        } else {
-            return Err(anyhow::anyhow!("{e}"));
+        Err(e) => {
+            if thread_count > 1 {
+                eprintln!("注意: 多线程应用补丁失败，回退单线程重试 ({e})");
+                let old_data = std::fs::read(old_file)
+                    .map_err(|e2| anyhow::anyhow!("读取旧文件失败 {}: {e2}", old_file.display()))?;
+                let new_data = ffi::apply_patch(&old_data, &patch_data, 1)
+                    .map_err(|e2| anyhow::anyhow!("单线程重试也失败: {e2}"))?;
+                std::fs::write(output_file, &new_data)
+                    .map_err(|e2| anyhow::anyhow!("写入输出文件失败 {}: {e2}", output_file.display()))?;
+            } else {
+                return Err(anyhow::anyhow!("{e}"));
+            }
         }
-    }
     }
 
     Ok(())

@@ -73,8 +73,14 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                     }
                     PatchMode::Auto => {
                         let (old_hash, new_hash) = match try_mem_patch(old, new, &patch_output, use_compression, fast_format) {
-                            Ok((oh, nh)) => (oh, nh),
-                            Err(_first_err) => {
+                            Ok((oh, nh)) => {
+                                if oh == nh {
+                                    let _ = std::fs::remove_file(&patch_output);
+                                    continue;
+                                }
+                                (oh, nh)
+                            }
+                            Err(e) if e.is_oom() => {
                                 let old_sz = std::fs::metadata(old).map(|m| m.len()).unwrap_or(0);
                                 let new_sz = std::fs::metadata(new).map(|m| m.len()).unwrap_or(0);
                                 let total_gb = (old_sz + new_sz) as f64 / (1u64 << 30) as f64;
@@ -85,6 +91,9 @@ pub fn build_patch_bundle(base_dir: &Path, use_compression: bool, mode: PatchMod
                                 println!("[变更] {relative_path}");
                                 create_patch_stream(old, new, &patch_output, use_compression, fast_format)?;
                                 (oh, nh)
+                            }
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("创建补丁失败 ({relative_path}): {e}"));
                             }
                         };
                         manifest.changed.push(ChangedEntry {

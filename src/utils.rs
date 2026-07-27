@@ -18,8 +18,10 @@ pub fn format_size(size_bytes: u64) -> String {
         format!("{:.2} KB", size_bytes as f64 / 1024.0)
     } else if size_bytes < 1024 * 1024 * 1024 {
         format!("{:.2} MB", size_bytes as f64 / (1024.0 * 1024.0))
-    } else {
+    } else if size_bytes < 1024u64 * 1024 * 1024 * 1024 {
         format!("{:.2} GB", size_bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else {
+        format!("{:.2} TB", size_bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0))
     }
 }
 
@@ -55,7 +57,6 @@ pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
 }
 
 pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
-    let base = base_dir.to_path_buf();
     WalkDir::new(base_dir)
         .into_iter()
         .filter_map(move |entry| {
@@ -64,14 +65,6 @@ pub fn iter_files(base_dir: &Path) -> impl Iterator<Item = PathBuf> {
                 Some(entry.path().to_path_buf())
             } else {
                 None
-            }
-        })
-        .filter_map(move |path| {
-            let rel = path.strip_prefix(&base).ok()?;
-            if rel.as_os_str().is_empty() {
-                None
-            } else {
-                Some(path)
             }
         })
 }

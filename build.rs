@@ -62,6 +62,8 @@ fn main() {
     let zlib_dir = download_zlib(zlib_version, &cache_dir);
 
     let mut zlib_build = cc::Build::new();
+    zlib_build.define("NDEBUG", None);
+    zlib_build.opt_level(3);
     zlib_build.include(&zlib_dir);
     for f in &["adler32", "compress", "crc32", "deflate", "inflate",
                "inftrees", "inffast", "trees", "uncompr", "zutil"] {
@@ -87,6 +89,7 @@ fn main() {
     let mut c_build = cc::Build::new();
     c_build.define("NDEBUG", None);          // disable assert()
     c_build.define("_IS_RUN_MEM_SAFE_CHECK", "0"); // disable runtime bounds checks
+    c_build.define("_IS_OUT_DIFF_INFO", "0"); // suppress HDiffPatch progress logs
     c_build.opt_level(3);                    // -O3 (upstream default)
     for inc in includes {
         c_build.include(inc);
@@ -107,17 +110,13 @@ fn main() {
     c_build.file(src_dir.join("HPatch").join("hpatch_mt").join("_hcache_old_mt.c"));
     c_build.file(src_dir.join("HPatch").join("hpatch_mt").join("hpatch_mt.c"));
     c_build.file(parallel_dir.join("parallel_import_c.c"));
-    // Add zlib source to the C build for hdiffpatch_c (needed by patch.c for decompression)
-    for f in &["adler32", "compress", "crc32", "deflate", "inflate",
-               "inftrees", "inffast", "trees", "uncompr", "zutil"] {
-        c_build.file(zlib_dir.join(format!("{f}.c")));
-    }
     c_build.compile("hdiffpatch_c");
 
     // Compile C++ files
     let mut cpp_build = cc::Build::new();
     cpp_build.define("NDEBUG", None);
     cpp_build.define("_IS_RUN_MEM_SAFE_CHECK", "0");
+    cpp_build.define("_IS_OUT_DIFF_INFO", "0"); // suppress HDiffPatch progress logs
     cpp_build.opt_level(3);
     for inc in includes {
         cpp_build.include(inc);

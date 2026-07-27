@@ -122,6 +122,7 @@ impl Manifest {
     }
 
     pub fn save(&self, patch_dir: &Path) -> anyhow::Result<()> {
+        self.validate()?;
         crate::utils::ensure_parent_dir(&patch_dir.join(MANIFEST_NAME))?;
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(patch_dir.join(MANIFEST_NAME), content)?;

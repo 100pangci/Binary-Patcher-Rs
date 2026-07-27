@@ -33,7 +33,7 @@ fn build_workspace(base_dir: &Path) -> (PathBuf, PathBuf) {
     // deleted
     std::fs::write(old_dir.join("deprecated.log"), "old log").unwrap();
     std::fs::create_dir_all(old_dir.join("deep/nested")).unwrap();
-    std::fs::write(old_dir.join("deep/nested/old_cache.tmp"), &[0u8; 10]).unwrap();
+    std::fs::write(old_dir.join("deep/nested/old_cache.tmp"), [0u8; 10]).unwrap();
 
     (old_dir, new_dir)
 }
@@ -380,7 +380,7 @@ fn make_test_data() -> (Vec<u8>, Vec<u8>) {
     let mut new_data = Vec::with_capacity(64 * 1024);
 
     for i in 0..4096u32 {
-        let val = (i.wrapping_mul(0x9E3779B1).wrapping_add(0x85EBCA77)) as u32;
+        let val = i.wrapping_mul(0x9E3779B1).wrapping_add(0x85EBCA77);
         old_data.extend_from_slice(&val.to_le_bytes());
         new_data.extend_from_slice(&val.to_le_bytes());
     }

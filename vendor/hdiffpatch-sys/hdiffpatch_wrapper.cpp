@@ -281,10 +281,12 @@ int hdiffpatch_apply_file(
 {
     int ret = 0;
     bool old_opened = false;
+    bool out_opened = false;
     hpatch_TFileStreamInput  oldStream;
     hpatch_TFileStreamOutput outStream;
 
     hpatch_TFileStreamInput_init(&oldStream);
+    hpatch_TFileStreamOutput_init(&outStream);
 
     try {
         hpatch_TStreamInput diffStream;
@@ -297,9 +299,9 @@ int hdiffpatch_apply_file(
                     { ret = -5; goto cleanup; }
                 old_opened = true;
 
-                hpatch_TFileStreamOutput_init(&outStream);
                 if (!hpatch_TFileStreamOutput_open(&outStream, output_file, ~(hpatch_StreamPos_t)0))
                     { ret = -7; goto cleanup; }
+                out_opened = true;
                 hpatch_TFileStreamOutput_setRandomOut(&outStream, hpatch_TRUE);
 
                 size_t capped_threads = (size_t)thread_num;
@@ -350,10 +352,10 @@ int hdiffpatch_apply_file(
                                       decompressPlugin))
                 { ret = -3; goto cleanup; }
 
-            hpatch_TFileStreamOutput_init(&outStream);
             if (!hpatch_TFileStreamOutput_open(&outStream, output_file,
-                                               ~(hpatch_StreamPos_t)0))
+                                                ~(hpatch_StreamPos_t)0))
                 { ret = -7; goto cleanup; }
+            out_opened = true;
             hpatch_TFileStreamOutput_setRandomOut(&outStream, hpatch_TRUE);
             outStream.base.write(&outStream.base, 0, new_data.data(),
                                  new_data.data() + new_data.size());
@@ -363,7 +365,7 @@ int hdiffpatch_apply_file(
     }
 
 cleanup:
-    if (outStream.m_file) hpatch_TFileStreamOutput_close(&outStream);
+    if (out_opened) hpatch_TFileStreamOutput_close(&outStream);
     if (old_opened && oldStream.m_file) hpatch_TFileStreamInput_close(&oldStream);
     return ret;
 }
