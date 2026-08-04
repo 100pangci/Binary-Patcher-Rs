@@ -8,8 +8,7 @@ const MAX_DIFF_THREADS: u32 = 32;
 
 fn clamp_thread_count(max: u32) -> u32 {
     let cpu_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(DEFAULT_THREADS as usize);
+        .map_or(DEFAULT_THREADS as usize, std::num::NonZeroUsize::get);
     (cpu_count.saturating_sub(1)).max(1).min(max as usize) as u32
 }
 

@@ -162,7 +162,7 @@ binary_patcher
 │   └── gen_test_data.ps1    # 测试数据生成脚本
 ├── vendor/
 │   └── hdiffpatch-sys/      # HDiffPatch C/C++ 包装代码
-├── Cargo.toml
+├── Cargo.toml               # 含 [lints] 配置（clippy/rustc 检查）
 ├── src/
 │   ├── lib.rs               # 库入口，公开所有模块
 │   ├── main.rs              # binary_patcher 入口
@@ -182,7 +182,14 @@ binary_patcher
 │   ├── apply.rs             # 补丁应用逻辑
 │   └── rollback.rs          # 补丁回滚逻辑
 └── tests/
-    └── integration_test.rs  # 单元测试 + 全流程集成测试（38 项）
+    ├── common/mod.rs       # 测试公共辅助（工作区构建、文件遍历、目录拷贝）
+    ├── unit_fmt.rs         # format_size 单元测试
+    ├── unit_hash.rs        # SHA256 单元测试
+    ├── unit_path.rs        # 安全路径解析单元测试
+    ├── unit_fs.rs          # 文件系统遍历与映射单元测试
+    ├── unit_manifest.rs    # Manifest 校验/加载单元测试
+    ├── unit_backup.rs      # 备份/恢复单元测试
+    └── workflow.rs         # 端到端集成测试（39 项）
 ```
 
 ## 安全
@@ -209,8 +216,8 @@ cargo build
 # 运行所有测试（单元 + 集成）
 cargo test
 
-# 仅运行集成测试（输出详细日志）
-cargo test --test integration_test -- --nocapture
+# 仅运行端到端集成测试（输出详细日志）
+cargo test --test workflow -- --nocapture
 
 # 发布构建
 cargo build --release

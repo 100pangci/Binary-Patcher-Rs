@@ -36,14 +36,9 @@ impl ChangeJournal {
     fn rollback(&self) {
         for entry in self.entries.iter().rev() {
             match entry {
-                JournalEntry::Patched { target } | JournalEntry::Deleted { target } => {
-                    if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
-                        eprintln!("  [rollback] {}: {e}", target.display());
-                    } else {
-                        println!("  [rollback] restored: {}", target.display());
-                    }
-                }
-                JournalEntry::Added {
+                JournalEntry::Patched { target }
+                | JournalEntry::Deleted { target }
+                | JournalEntry::Added {
                     target,
                     had_backup: true,
                 } => {
@@ -120,6 +115,7 @@ pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn check_version_compat_or_prompt(manifest: &Manifest) -> anyhow::Result<()> {
+    use std::io::Write;
     match crate::manifest::check_version_compat(&manifest.format) {
         crate::manifest::VersionCompat::Compatible => Ok(()),
         crate::manifest::VersionCompat::Incompatible {
@@ -129,7 +125,6 @@ fn check_version_compat_or_prompt(manifest: &Manifest) -> anyhow::Result<()> {
             eprintln!("{}", t!("apply.version-warning", mver));
             eprintln!("{}", t!("apply.version-warning2", tver));
             print!("{}", t!("apply.version-prompt"));
-            use std::io::Write;
             std::io::stdout().flush()?;
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
@@ -191,8 +186,7 @@ fn apply_changed_files(
         let backup_path = write_backup(&old_data, &target_path, base_dir, &journal.backup_root)?;
         let backup_name = backup_path
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "?".to_string());
+            .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
         println!("{}", t!("apply.changed", item.path));
         println!("{}", t!("apply.backed-up", backup_name));
 
@@ -246,8 +240,7 @@ fn apply_added_files(
         let had_backup = if target_path.exists() {
             let backup_name = create_backup(&target_path, base_dir, &journal.backup_root)?
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "?".to_string());
+                .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
             println!("{}", t!("apply.target-exists-backup", backup_name));
             true
         } else {
@@ -280,8 +273,7 @@ fn apply_deleted_files(
             let backup_path = create_backup(&target_path, base_dir, &journal.backup_root)?;
             let backup_name = backup_path
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "?".to_string());
+                .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
             println!("{}", t!("apply.deleted", item.path));
             println!("{}", t!("apply.backed-up", backup_name));
             std::fs::remove_file(&target_path)?;

@@ -109,8 +109,8 @@ pub fn create_patch(
             &mut out_patch,
             &mut out_patch_size,
             thread_num_i32,
-            use_compression as i32,
-            fast_format as i32,
+            i32::from(use_compression),
+            i32::from(fast_format),
         )
     };
 
@@ -182,8 +182,8 @@ pub fn create_patch_file(
             new_c.as_ptr(),
             patch_c.as_ptr(),
             thread_num_i32,
-            use_compression as i32,
-            fast_format as i32,
+            i32::from(use_compression),
+            i32::from(fast_format),
         )
     };
 

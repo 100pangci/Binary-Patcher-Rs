@@ -191,7 +191,14 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 │   ├── apply.rs             # Bundle application logic
 │   └── rollback.rs          # Bundle rollback logic
 └── tests/
-    └── integration_test.rs  # Unit + full-workflow integration tests (38 tests)
+    ├── common/mod.rs       # Shared test helpers (workspace setup, file walk, tree copy)
+    ├── unit_fmt.rs         # format_size unit tests
+    ├── unit_hash.rs        # SHA256 unit tests
+    ├── unit_path.rs        # Safe path resolution unit tests
+    ├── unit_fs.rs          # Filesystem traversal/mapping unit tests
+    ├── unit_manifest.rs    # Manifest validation/loading unit tests
+    ├── unit_backup.rs      # Backup/restore unit tests
+    └── workflow.rs         # End-to-end integration tests (39 tests)
 ```
 
 ## Security
@@ -218,8 +225,8 @@ cargo build
 # Run all tests (unit + integration)
 cargo test
 
-# Run only integration tests with verbose output
-cargo test --test integration_test -- --nocapture
+# Run only the end-to-end integration tests with verbose output
+cargo test --test workflow -- --nocapture
 
 # Release build
 cargo build --release

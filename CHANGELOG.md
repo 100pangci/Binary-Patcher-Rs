@@ -2,6 +2,15 @@
 
 ## [dev] — 
 
+### Added
+- `[lints]` 配置：crate 级声明 rustc/clippy 检查（含 pedantic 选择性启用），不再依赖 CI 参数
+- 测试按模块拆分：`tests/integration_test.rs`（919 行）拆分为 `common/` + 6 个单元测试文件 + `workflow.rs`
+
+### Changed
+- `build_script/compile.rs` 重构：`compile_all` 拆分为 `compile_c` / `compile_cpp` / `new_build` / `includes_for`
+- `build_script/download.rs` 修复 5 处 clippy pedantic 告警（manual_assert、uninlined_format_args 等）
+- 修复 25 处 clippy pedantic 告警：FFI bool→i32 改用 `i32::from`、`match` 改为 `let...else` / `is_err()`、`map_or` 替代 `map().unwrap_or()` 等
+
 ### Fixed
 - bundle 模式补丁信息中 `{0}` 占位符未替换，`print_patch_result` 和 `process_changed_auto` 未传递参数导致占位符字面输出
 

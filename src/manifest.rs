@@ -53,23 +53,17 @@ fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
 }
 
 pub fn check_version_compat(manifest_version: &str) -> VersionCompat {
-    let manifest_ver = match parse_semver(manifest_version) {
-        Some(v) => v,
-        None => {
-            return VersionCompat::Incompatible {
-                manifest: manifest_version.to_string(),
-                tool: PACKAGE_VERSION.to_string(),
-            };
-        }
+    let Some(manifest_ver) = parse_semver(manifest_version) else {
+        return VersionCompat::Incompatible {
+            manifest: manifest_version.to_string(),
+            tool: PACKAGE_VERSION.to_string(),
+        };
     };
-    let tool_ver = match parse_semver(PACKAGE_VERSION) {
-        Some(v) => v,
-        None => {
-            return VersionCompat::Incompatible {
-                manifest: manifest_version.to_string(),
-                tool: PACKAGE_VERSION.to_string(),
-            };
-        }
+    let Some(tool_ver) = parse_semver(PACKAGE_VERSION) else {
+        return VersionCompat::Incompatible {
+            manifest: manifest_version.to_string(),
+            tool: PACKAGE_VERSION.to_string(),
+        };
     };
     if manifest_ver.0 == tool_ver.0 && manifest_ver.1 == tool_ver.1 {
         VersionCompat::Compatible
@@ -86,7 +80,7 @@ where
     D: Deserializer<'de>,
 {
     struct FormatVisitor;
-    impl<'de> Visitor<'de> for FormatVisitor {
+    impl Visitor<'_> for FormatVisitor {
         type Value = String;
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
             f.write_str("a semver string like \"1.1.0\" or an integer like 1")

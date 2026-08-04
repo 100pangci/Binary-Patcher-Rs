@@ -13,8 +13,7 @@ pub fn cleanup_empty_dirs(start_dir: &Path, base_dir: &Path) -> anyhow::Result<V
             break;
         }
         if current.is_dir() {
-            let has_entries = current.read_dir()?.next().is_some();
-            if !has_entries {
+            if current.read_dir()?.next().is_none() {
                 std::fs::remove_dir(&current)?;
                 removed.push(current.clone());
             } else {
@@ -62,7 +61,7 @@ pub fn relative_maps(
     for entry in WalkDir::new(base_dir)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
     {
         if let Ok(rel) = entry.path().strip_prefix(&base) {
             let rel_str = rel.to_string_lossy().replace('\\', "/");

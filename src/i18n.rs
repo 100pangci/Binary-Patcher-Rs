@@ -153,8 +153,7 @@ pub fn init(lang: &str, lang_dir: Option<&Path>) {
 pub fn tr(key: &str) -> &str {
     I18N.get()
         .and_then(|i| i.data.get(key))
-        .map(|s| s.as_str())
-        .unwrap_or(key)
+        .map_or(key, String::as_str)
 }
 
 /// 从 Cli 中提取语言和语言目录参数并初始化 i18n。
@@ -169,7 +168,7 @@ pub fn init_from_cli(lang: &str, lang_dir: Option<&std::path::Path>) {
 }
 
 pub fn current_lang() -> &'static str {
-    I18N.get().map(|i| i.lang.as_str()).unwrap_or("en")
+    I18N.get().map_or("en", |i| i.lang.as_str())
 }
 
 pub fn into_arg<T: std::fmt::Display>(value: &T) -> String {

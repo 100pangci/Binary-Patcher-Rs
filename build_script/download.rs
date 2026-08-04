@@ -37,7 +37,7 @@ fn extract_zip_entries(
             let mut out_file = std::fs::File::create(&out_path)
                 .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_path.display()));
             std::io::copy(&mut entry, &mut out_file)
-                .unwrap_or_else(|e| panic!("Failed to extract {}: {e}", entry_name));
+                .unwrap_or_else(|e| panic!("Failed to extract {entry_name}: {e}"));
         }
     }
 }
@@ -69,9 +69,10 @@ pub fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
     let zlib_h = zlib_dir.join("zlib.h");
     let content = std::fs::read_to_string(&zlib_h)
         .unwrap_or_else(|e| panic!("zlib integrity check: cannot read zlib.h: {e}"));
-    if !content.contains("ZLIB_VERSION") {
-        panic!("zlib integrity check failed: zlib.h missing ZLIB_VERSION");
-    }
+    assert!(
+        content.contains("ZLIB_VERSION"),
+        "zlib integrity check failed: zlib.h missing ZLIB_VERSION"
+    );
 
     zlib_dir
 }
@@ -105,7 +106,7 @@ fn get_latest_tag(cache_dir: &Path) -> String {
     if let Ok(resp) = client.get(super::HDIFFPATCH_REPO_API).send()
         && let Ok(release) = resp.json::<serde_json::Value>()
     {
-        tag_name = release["tag_name"].as_str().map(|s| s.to_string());
+        tag_name = release["tag_name"].as_str().map(str::to_string);
     }
 
     if tag_name.is_none() {
@@ -153,6 +154,7 @@ fn get_latest_tag(cache_dir: &Path) -> String {
     tag_name
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
     let cache_dir = expected_dir.parent().unwrap();
 
@@ -203,12 +205,11 @@ pub fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
         .join("libHDiffPatch")
         .join("HPatch")
         .join("patch.h");
-    if !check_file.exists() {
-        panic!(
-            "HDiffPatch extraction failed: {} not found",
-            check_file.display()
-        );
-    }
+    assert!(
+        check_file.exists(),
+        "HDiffPatch extraction failed: {} not found",
+        check_file.display()
+    );
 
     println!(
         "cargo:warning=HDiffPatch {tag_name} extracted to {}",

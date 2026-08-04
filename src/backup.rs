@@ -82,7 +82,7 @@ pub fn restore_backup(
     let find_newest = |dir: &Path| -> Option<PathBuf> {
         std::fs::read_dir(dir)
             .ok()?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .map(|e| e.path())
             .filter(|p| {
                 p.file_name()
@@ -97,14 +97,11 @@ pub fn restore_backup(
         if target_path.exists() {
             std::fs::remove_file(target_path)?;
         }
-        match std::fs::rename(backup_path, target_path) {
-            Ok(()) => Ok(true),
-            Err(_) => {
-                std::fs::copy(backup_path, target_path)?;
-                std::fs::remove_file(backup_path)?;
-                Ok(true)
-            }
+        if std::fs::rename(backup_path, target_path).is_err() {
+            std::fs::copy(backup_path, target_path)?;
+            std::fs::remove_file(backup_path)?;
         }
+        Ok(true)
     };
 
     let rel = target_path

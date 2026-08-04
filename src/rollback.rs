@@ -3,6 +3,7 @@ use crate::fs::cleanup_empty_dirs;
 use crate::manifest::Manifest;
 use crate::path::{display_path, resolve_safe_path};
 use crate::t;
+use std::io::Write;
 use std::path::Path;
 
 pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
@@ -113,7 +114,6 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
         let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdin());
         let should_clean = if is_terminal {
             print!("{}", t!("rollback.cleanup-prompt", backup_root.display()));
-            use std::io::Write;
             std::io::stdout().flush()?;
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;

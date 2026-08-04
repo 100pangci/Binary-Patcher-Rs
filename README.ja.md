@@ -191,7 +191,14 @@ binary_patcher
 │   ├── apply.rs             # バンドル適用ロジック
 │   └── rollback.rs          # バンドルロールバックロジック
 └── tests/
-    └── integration_test.rs  # ユニット + 全フロー統合テスト（38 項目）
+    ├── common/mod.rs       # テスト共通ヘルパー（ワークスペース構築、ファイル走査、ツリーコピー）
+    ├── unit_fmt.rs         # format_size ユニットテスト
+    ├── unit_hash.rs        # SHA256 ユニットテスト
+    ├── unit_path.rs        # 安全なパス解決ユニットテスト
+    ├── unit_fs.rs          # ファイルシステム走査・マッピングユニットテスト
+    ├── unit_manifest.rs    # マニフェスト検証・ロードユニットテスト
+    ├── unit_backup.rs      # バックアップ・復元ユニットテスト
+    └── workflow.rs         # エンドツーエンド統合テスト（39 項目）
 ```
 
 ## セキュリティ
@@ -219,7 +226,7 @@ cargo build
 cargo test
 
 # 統合テストのみ詳細出力
-cargo test --test integration_test -- --nocapture
+cargo test --test workflow -- --nocapture
 
 # リリースビルド
 cargo build --release

@@ -1,36 +1,59 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn compile_all(hd_path: &Path, zlib_dir: &Path) {
     let src_dir = hd_path.join("libHDiffPatch");
     let parallel_dir = hd_path.join("libParallel");
+    let includes = includes_for(hd_path, &src_dir, &parallel_dir, zlib_dir);
+    compile_c(&src_dir, &parallel_dir, hd_path, &includes);
+    compile_cpp(&src_dir, &parallel_dir, hd_path, &includes);
+}
 
-    let includes: &[&Path] = &[
-        hd_path,
-        &src_dir,
-        &src_dir.join("HDiff"),
-        &src_dir.join("HPatch"),
-        &src_dir.join("HPatch").join("hpatch_mt"),
-        &src_dir.join("HPatchLite"),
-        &parallel_dir,
-        &hd_path.join("dirDiffPatch"),
-        &hd_path.join("bsdiff_wrapper"),
-        &hd_path.join("vcdiff_wrapper"),
-        zlib_dir,
-    ];
+fn includes_for(
+    hd_path: &Path,
+    src_dir: &Path,
+    parallel_dir: &Path,
+    zlib_dir: &Path,
+) -> Vec<PathBuf> {
+    vec![
+        hd_path.to_path_buf(),
+        src_dir.to_path_buf(),
+        src_dir.join("HDiff"),
+        src_dir.join("HPatch"),
+        src_dir.join("HPatch").join("hpatch_mt"),
+        src_dir.join("HPatchLite"),
+        parallel_dir.to_path_buf(),
+        hd_path.join("dirDiffPatch"),
+        hd_path.join("bsdiff_wrapper"),
+        hd_path.join("vcdiff_wrapper"),
+        zlib_dir.to_path_buf(),
+    ]
+}
 
-    let mut c_build = cc::Build::new();
-    c_build.define("NDEBUG", None);
-    c_build.define("_IS_RUN_MEM_SAFE_CHECK", "0");
-    c_build.define("_IS_OUT_DIFF_INFO", "0");
-    c_build.opt_level(3);
+fn new_build(includes: &[PathBuf], cpp: bool) -> cc::Build {
+    let mut build = cc::Build::new();
+    build
+        .define("NDEBUG", None)
+        .define("_IS_RUN_MEM_SAFE_CHECK", "0")
+        .define("_IS_OUT_DIFF_INFO", "0")
+        .opt_level(3)
+        .include("vendor/hdiffpatch-sys")
+        .cpp(cpp);
     for inc in includes {
-        c_build.include(inc);
+        build.include(inc);
     }
-    c_build.include("vendor/hdiffpatch-sys");
+    if cpp {
+        build.flag_if_supported("-std=c++11");
+        build.flag_if_supported("/std:c++11");
+        build.define("_CompressPlugin_zlib", None);
+    }
     if !cfg!(windows) {
-        c_build.flag("-pthread");
+        build.flag("-pthread");
     }
+    build
+}
 
+fn compile_c(src_dir: &Path, parallel_dir: &Path, hd_path: &Path, includes: &[PathBuf]) {
+    let mut c_build = new_build(includes, false);
     c_build.file(src_dir.join("HPatch").join("patch.c"));
     c_build.file(src_dir.join("HPatchLite").join("hpatch_lite.c"));
     c_build.file(hd_path.join("file_for_patch.c"));
@@ -74,24 +97,10 @@ pub fn compile_all(hd_path: &Path, zlib_dir: &Path) {
     c_build.file(src_dir.join("HPatch").join("hpatch_mt").join("hpatch_mt.c"));
     c_build.file(parallel_dir.join("parallel_import_c.c"));
     c_build.compile("hdiffpatch_c");
+}
 
-    let mut cpp_build = cc::Build::new();
-    cpp_build.define("NDEBUG", None);
-    cpp_build.define("_IS_RUN_MEM_SAFE_CHECK", "0");
-    cpp_build.define("_IS_OUT_DIFF_INFO", "0");
-    cpp_build.opt_level(3);
-    for inc in includes {
-        cpp_build.include(inc);
-    }
-    cpp_build.include("vendor/hdiffpatch-sys");
-    cpp_build.cpp(true);
-    cpp_build.flag_if_supported("-std=c++11");
-    cpp_build.flag_if_supported("/std:c++11");
-    if !cfg!(windows) {
-        cpp_build.flag("-pthread");
-    }
-    cpp_build.define("_CompressPlugin_zlib", None);
-
+fn compile_cpp(src_dir: &Path, parallel_dir: &Path, hd_path: &Path, includes: &[PathBuf]) {
+    let mut cpp_build = new_build(includes, true);
     cpp_build.file(src_dir.join("HDiff").join("diff.cpp"));
     cpp_build.file(
         src_dir

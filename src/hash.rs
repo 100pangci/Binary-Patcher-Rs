@@ -12,7 +12,7 @@ pub fn sha256_of_file(path: &std::path::Path) -> anyhow::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut ctx = Context::new(&SHA256);
 
-    let mut buffer = SHA256_BUF.with(|buf| buf.take());
+    let mut buffer = SHA256_BUF.take();
     if buffer.len() < STREAM_BUF_SIZE {
         buffer.resize(STREAM_BUF_SIZE, 0);
     }
