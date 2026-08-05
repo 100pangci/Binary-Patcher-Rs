@@ -12,7 +12,6 @@ int hdiffpatch_create(
     const unsigned char* new_data, size_t new_size,
     unsigned char** out_patch, size_t* out_patch_size,
     int thread_num,
-    int use_compression,
     int fast_format
 );
 
@@ -21,7 +20,6 @@ int hdiffpatch_create_file(
     const char* new_file,
     const char* patch_file,
     int thread_num,
-    int use_compression,
     int fast_format
 );
 

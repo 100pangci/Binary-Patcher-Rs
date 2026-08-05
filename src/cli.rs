@@ -3,10 +3,7 @@ use std::path::PathBuf;
 
 /// 为 clap Command 的各个参数应用 i18n 帮助文本。
 pub fn apply_arg_help(cmd: Command) -> Command {
-    cmd.mut_arg("no_compress", |a| {
-        a.help(crate::i18n::load_help_text("cli.no-compress"))
-    })
-    .mut_arg("patch_mode", |a| {
+    cmd.mut_arg("patch_mode", |a| {
         a.help(crate::i18n::load_help_text("cli.mode"))
     })
     .mut_arg("patch_format", |a| {
@@ -32,13 +29,6 @@ pub fn apply_base_arg_help(cmd: Command, base_key: &str) -> Command {
 #[derive(Parser)]
 #[command(name = "binary_patcher")]
 pub struct Cli {
-    #[arg(
-        long = "no-compress",
-        default_value_t = false,
-        help = "禁用补丁压缩（默认启用 zlib 压缩）"
-    )]
-    pub no_compress: bool,
-
     #[arg(
         long = "mode",
         default_value = "auto",

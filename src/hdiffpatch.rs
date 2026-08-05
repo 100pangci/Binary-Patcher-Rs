@@ -33,7 +33,6 @@ pub fn run_hdiffz_mem(
     new_data: &[u8],
     patch_file: &Path,
     thread_count: u32,
-    use_compression: bool,
     fast_format: bool,
 ) -> Result<u32, ffi::PatchError> {
     crate::path::ensure_parent_dir(patch_file).map_err(|e| ffi::PatchError {
@@ -41,13 +40,7 @@ pub fn run_hdiffz_mem(
         message: e.to_string(),
     })?;
 
-    let patch_data = ffi::create_patch(
-        old_data,
-        new_data,
-        thread_count,
-        use_compression,
-        fast_format,
-    )?;
+    let patch_data = ffi::create_patch(old_data, new_data, thread_count, fast_format)?;
     std::fs::write(patch_file, &patch_data).map_err(|e| ffi::PatchError {
         code: -1,
         message: t!("ffi.write-failed", patch_file.display(), e),
@@ -60,7 +53,6 @@ pub fn run_hdiffz_stream(
     new_file: &Path,
     patch_file: &Path,
     thread_count: u32,
-    use_compression: bool,
     fast_format: bool,
 ) -> Result<u32, ffi::PatchError> {
     crate::path::ensure_parent_dir(patch_file).map_err(|e| ffi::PatchError {
@@ -68,14 +60,7 @@ pub fn run_hdiffz_stream(
         message: e.to_string(),
     })?;
 
-    ffi::create_patch_file(
-        old_file,
-        new_file,
-        patch_file,
-        thread_count,
-        use_compression,
-        fast_format,
-    )?;
+    ffi::create_patch_file(old_file, new_file, patch_file, thread_count, fast_format)?;
     Ok(thread_count)
 }
 
@@ -83,7 +68,6 @@ pub fn run_hdiffz(
     old_file: &Path,
     new_file: &Path,
     patch_file: &Path,
-    use_compression: bool,
     fast_format: bool,
 ) -> anyhow::Result<u32> {
     let thread_count = get_diff_thread_count();
@@ -98,15 +82,8 @@ pub fn run_hdiffz(
     {
         let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
         eprintln!("{}", t!("hdiff.size-fallback", format!("{:.1}", total_gb)));
-        return run_hdiffz_stream_forced(
-            old_file,
-            new_file,
-            patch_file,
-            thread_count,
-            use_compression,
-            fast_format,
-        )
-        .map_err(|e| anyhow::anyhow!("{e}"));
+        return run_hdiffz_stream_forced(old_file, new_file, patch_file, thread_count, fast_format)
+            .map_err(|e| anyhow::anyhow!("{e}"));
     }
 
     let old_data = std::fs::read(old_file)
@@ -114,14 +91,7 @@ pub fn run_hdiffz(
     let new_data = std::fs::read(new_file)
         .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-new-failed", new_file.display(), e)))?;
 
-    let mem_result = run_hdiffz_mem(
-        &old_data,
-        &new_data,
-        patch_file,
-        thread_count,
-        use_compression,
-        fast_format,
-    );
+    let mem_result = run_hdiffz_mem(&old_data, &new_data, patch_file, thread_count, fast_format);
     // 无论成功失败，立即释放内存路径读入的文件数据：
     // OOM 流式回退时若仍占用内存，会导致流式再次 OOM
     // （且 HDiffPatch 内部线程池在异常展开时无法安全回收，直接 terminate）。
@@ -140,15 +110,8 @@ pub fn run_hdiffz(
                     eprintln!("{}", t!("hdiff.oom-fallback-generic"));
                 }
             }
-            run_hdiffz_stream_forced(
-                old_file,
-                new_file,
-                patch_file,
-                thread_count,
-                use_compression,
-                fast_format,
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))
+            run_hdiffz_stream_forced(old_file, new_file, patch_file, thread_count, fast_format)
+                .map_err(|e| anyhow::anyhow!("{e}"))
         }
         Err(e) => Err(anyhow::anyhow!("{e}")),
     }
@@ -162,20 +125,12 @@ fn run_hdiffz_stream_forced(
     new_file: &Path,
     patch_file: &Path,
     thread_count: u32,
-    use_compression: bool,
     fast_format: bool,
 ) -> Result<u32, ffi::PatchError> {
     if !fast_format {
         eprintln!("{}", t!("hdiff.stream-fast-forced"));
     }
-    run_hdiffz_stream(
-        old_file,
-        new_file,
-        patch_file,
-        thread_count,
-        use_compression,
-        true,
-    )
+    run_hdiffz_stream(old_file, new_file, patch_file, thread_count, true)
 }
 
 pub fn apply_patch_auto(

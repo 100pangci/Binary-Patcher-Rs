@@ -12,7 +12,6 @@ fn create_single_patch(
     old_file: &str,
     new_file: &str,
     patch_file: &str,
-    use_compression: bool,
     fast_format: bool,
 ) -> anyhow::Result<()> {
     let old_path = Path::new(old_file);
@@ -26,8 +25,7 @@ fn create_single_patch(
     println!("{}", t!("main.reading-old", old_file));
     println!("{}", t!("main.reading-new", new_file));
     println!("{}", t!("main.calling-hdiff"));
-    let thread_count =
-        hdiffpatch::run_hdiffz(old_path, new_path, patch_path, use_compression, fast_format)?;
+    let thread_count = hdiffpatch::run_hdiffz(old_path, new_path, patch_path, fast_format)?;
     let patch_size = std::fs::metadata(patch_path)?.len();
 
     println!("{}", "-".repeat(30));
@@ -55,8 +53,6 @@ fn main() {
     };
     binary_patcher::i18n::init(&lang, lang_dir);
 
-    let use_compression = !cli.no_compress;
-
     let result = match cli.command {
         Some(Commands::Create {
             old_file,
@@ -64,13 +60,7 @@ fn main() {
             patch_file,
         }) => {
             let fast_format = matches!(cli.patch_format, PatchFormat::Fast);
-            create_single_patch(
-                &old_file,
-                &new_file,
-                &patch_file,
-                use_compression,
-                fast_format,
-            )
+            create_single_patch(&old_file, &new_file, &patch_file, fast_format)
         }
         Some(Commands::Apply {
             old_file,
@@ -79,7 +69,6 @@ fn main() {
         }) => apply::apply_single_patch(&old_file, &patch_file, &output_file),
         Some(Commands::Bundle { base_dir }) => bundle::build_patch_bundle(
             Path::new(&base_dir),
-            use_compression,
             cli.patch_mode.clone(),
             cli.patch_format.clone(),
         ),
@@ -94,7 +83,6 @@ fn main() {
             match init_workspace(&base_dir) {
                 Ok(true) => bundle::build_patch_bundle(
                     &base_dir,
-                    use_compression,
                     cli.patch_mode.clone(),
                     cli.patch_format.clone(),
                 ),

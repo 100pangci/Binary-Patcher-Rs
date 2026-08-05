@@ -31,9 +31,11 @@ pub fn main() {
     zlib_build.define("NDEBUG", None);
     zlib_build.opt_level(3);
     zlib_build.include(&zlib_dir);
-    for f in &[
-        "adler32", "compress", "crc32", "deflate", "inflate", "inftrees", "inffast", "trees",
-        "uncompr", "zutil",
+    // 仅编译 inflate 所需文件：旧版压缩补丁的 apply 侧需要解压支持，
+    // create 侧不再压缩（zlib 对随机二进制差异无收益，且压缩序列化在内存不足时
+    // 会静默生成损坏补丁）。
+    for f in [
+        "adler32", "crc32", "inflate", "inftrees", "inffast", "zutil",
     ] {
         zlib_build.file(zlib_dir.join(format!("{f}.c")));
     }

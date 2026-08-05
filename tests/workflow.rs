@@ -17,7 +17,6 @@ fn test_full_workflow() {
     // Generate bundle (with compression)
     binary_patcher::bundle::build_patch_bundle(
         &base_dir,
-        true,
         binary_patcher::cli::PatchMode::Memory,
         binary_patcher::cli::PatchFormat::Precise,
     )
@@ -128,7 +127,6 @@ fn test_apply_failure_auto_rollback() {
 
     binary_patcher::bundle::build_patch_bundle(
         &base_dir,
-        true,
         binary_patcher::cli::PatchMode::Memory,
         binary_patcher::cli::PatchFormat::Precise,
     )
@@ -228,11 +226,10 @@ fn test_patch_format_fast_and_precise_both_work() {
     let patch_precise = dir.path().join("patch_precise.hdiff");
 
     // Create patch with fast format
-    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_fast, false, true).unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_fast, true).unwrap();
 
     // Create patch with precise format
-    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_precise, false, false)
-        .unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_precise, false).unwrap();
 
     // Apply fast patch
     let out_fast = dir.path().join("out_fast.bin");
@@ -277,7 +274,6 @@ fn test_stream_mode_workflow() {
 
     binary_patcher::bundle::build_patch_bundle(
         &base_dir,
-        true,
         binary_patcher::cli::PatchMode::Stream,
         binary_patcher::cli::PatchFormat::Precise,
     )
@@ -329,7 +325,7 @@ fn test_single_file_round_trip() {
     std::fs::write(&old_path, vec![0u8; 256]).unwrap();
     std::fs::write(&new_path, vec![0xFFu8; 256]).unwrap();
 
-    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true, false).unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, false).unwrap();
     assert!(patch_path.exists());
     assert!(std::fs::metadata(&patch_path).unwrap().len() > 0);
 
@@ -352,7 +348,7 @@ fn test_apply_single_patch() {
     std::fs::write(&old_path, "old content").unwrap();
     std::fs::write(&new_path, "new content with extra data!").unwrap();
 
-    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true, false).unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, false).unwrap();
     binary_patcher::apply::apply_single_patch(
         &old_path.to_string_lossy(),
         &patch_path.to_string_lossy(),
@@ -362,54 +358,6 @@ fn test_apply_single_patch() {
     assert_eq!(
         std::fs::read_to_string(&output_path).unwrap(),
         "new content with extra data!"
-    );
-}
-
-// ===========================================================================
-// No-compress mode
-// ===========================================================================
-
-#[test]
-fn test_no_compress_workflow() {
-    let root = tempfile::tempdir().unwrap();
-    let base_dir = root.path().to_path_buf();
-    std::fs::create_dir_all(base_dir.join("Old")).unwrap();
-    std::fs::create_dir_all(base_dir.join("New")).unwrap();
-    std::fs::write(
-        base_dir.join("Old/a.txt"),
-        "old data that is long enough to diff",
-    )
-    .unwrap();
-    std::fs::write(
-        base_dir.join("New/a.txt"),
-        "new data that is long enough to diff",
-    )
-    .unwrap();
-
-    binary_patcher::bundle::build_patch_bundle(
-        &base_dir,
-        false,
-        binary_patcher::cli::PatchMode::Memory,
-        binary_patcher::cli::PatchFormat::Precise,
-    )
-    .unwrap();
-    assert!(base_dir.join("Patch/manifest.json").exists());
-
-    let game_dir = base_dir.join("game");
-    std::fs::create_dir_all(&game_dir).unwrap();
-    std::fs::write(
-        game_dir.join("a.txt"),
-        "old data that is long enough to diff",
-    )
-    .unwrap();
-    let game_patch = game_dir.join("Patch");
-    std::fs::create_dir_all(&game_patch).unwrap();
-    copy_tree_files(&base_dir.join("Patch"), &game_patch);
-
-    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(game_dir.join("a.txt")).unwrap(),
-        "new data that is long enough to diff"
     );
 }
 
@@ -435,7 +383,6 @@ fn test_rollback_cleanup_empty_dirs() {
     // Bundle
     binary_patcher::bundle::build_patch_bundle(
         &base_dir,
-        true,
         binary_patcher::cli::PatchMode::Memory,
         binary_patcher::cli::PatchFormat::Precise,
     )

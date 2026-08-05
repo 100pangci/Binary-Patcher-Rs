@@ -57,14 +57,13 @@ int hdiffpatch_create(
     const unsigned char* new_data, size_t new_size,
     unsigned char** out_patch, size_t* out_patch_size,
     int thread_num,
-    int use_compression,
     int fast_format)
 {
     try {
         std::vector<unsigned char> diff;
+        // 不再压缩补丁：压缩序列化路径在内存不足时会在 C 层静默截断输出，
+        // 生成损坏补丁且不报错；且 zlib 对随机二进制差异数据几乎无收益。
         const hdiff_TCompress* compress = nullptr;
-        if (use_compression)
-            compress = (const hdiff_TCompress*)&zlibCompressPlugin;
 
         if (fast_format) {
             create_compressed_diff(
@@ -108,7 +107,6 @@ int hdiffpatch_create_file(
     const char* new_file,
     const char* patch_file,
     int thread_num,
-    int use_compression,
     int fast_format)
 {
     hpatch_TFileStreamInput  oldStream;
@@ -130,8 +128,6 @@ int hdiffpatch_create_file(
 
     try {
         const hdiff_TCompress* compress = nullptr;
-        if (use_compression)
-            compress = (const hdiff_TCompress*)&zlibCompressPlugin;
 
         size_t capped_threads = (size_t)thread_num;
         if (capped_threads < 1) capped_threads = 1;

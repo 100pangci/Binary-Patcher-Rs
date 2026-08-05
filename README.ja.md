@@ -125,7 +125,6 @@ binary_patcher
 | `create <旧> <新> <パッチ>` | 2 つのファイルから単一のパッチファイルを作成 |
 | `apply <旧> <パッチ> <出力>` | 単一のパッチファイルを適用 |
 | `bundle --base-dir <パス>` | 指定したワークスペースディレクトリでバンドルを生成 |
-| `--no-compress` | パッチ圧縮を無効化（デフォルト：zlib圧縮有効） |
 | `--mode auto/stream/memory` | 差分モード：`auto` 自動選択（デフォルト）、`stream` 低メモリストリーミング、`memory` 全メモリ高品質 |
 | `--format precise/fast` | 差分アルゴリズム：`precise` suffix-string（パッチ小、デフォルト）、`fast` hash（高速） |
 
@@ -156,7 +155,7 @@ binary_patcher
 ├── build.rs                 # ビルドエントリ（build_script/ に委譲）
 ├── build_script/            # ビルドモジュール
 │   ├── mod.rs               # ビルドオーケストレーション
-│   ├── download.rs          # HDiffPatch / zlib を自動ダウンロード
+│   ├── download.rs          # HDiffPatch / zlib を自動ダウンロード（inflate のみ）
 │   └── compile.rs           # C/C++ コンパイル
 ├── e2e.ps1                  # エンドツーエンド CLI テスト（Windows）
 ├── e2e.sh                   # エンドツーエンド CLI テスト（Linux）

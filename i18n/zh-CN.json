@@ -1,10 +1,8 @@
 {
   "lang.name": "简体中文",
   "lang.code": "zh-CN",
-
   "cli.lang": "语言代码（如 en, zh-CN, ja），不指定时自动检测系统语言",
   "cli.lang-dir": "自定义语言文件目录（包含 {lang}.json 文件）",
-  "cli.no-compress": "禁用补丁压缩（默认启用 zlib 压缩）",
   "cli.mode": "补丁模式: auto（自动判断，默认）、stream（流式低内存）、memory（全加载最优）",
   "cli.format": "差分算法: precise（suffix-string，补丁更小，默认）、fast（hash匹配，速度更快）",
   "cli.bundle-base-dir": "包含 Old/New/Patch 的工作目录（默认当前目录）",
@@ -16,7 +14,6 @@
   "cli.about-bp": "一个用于创建和应用二进制文件补丁的工具",
   "cli.about-apply": "应用整包补丁",
   "cli.about-rollback": "回滚已应用的整包补丁",
-
   "main.reading-old": "正在读取旧文件: {0}",
   "main.reading-new": "正在读取新文件: {0}",
   "bp.reading-patch": "正在读取补丁文件: {0}",
@@ -27,7 +24,6 @@
   "main.new-size": "新文件大小: {0}",
   "main.patch-size": "补丁文件大小: {0}",
   "main.cwd-failed": "警告: 无法获取当前目录 ({0})，使用 '.' 作为工作目录",
-
   "bundle.will-clear-patch": "注意: 将清空已有的 Patch 目录: {0}",
   "bundle.scanning": "开始扫描 Old / New 并计算 SHA256...",
   "bundle.changed": "[变更] {0}",
@@ -52,7 +48,6 @@
   "bundle.workspace-new": "- 新版本完整目录放入: New/",
   "bundle.workspace-output": "- 生成的补丁输出到: Patch/",
   "bundle.workspace-ready": "准备完成后，再次运行本程序即可自动生成整包补丁。",
-
   "apply.summary": "检测到补丁内容: 变更 {0}，新增 {1}，删除 {2}",
   "apply.changed": "[变更] {0}",
   "apply.added": "[新增] {0}",
@@ -85,7 +80,6 @@
   "apply.journal-rolled-back": "已从日志回滚上次中断的更改。",
   "apply.journal-corrupt": "补丁应用日志损坏: {0}（文件: {1}）\n可运行 rollback_patch 恢复备份，或删除日志文件后重新应用。",
   "apply.output-generated": "输出文件 '{0}' 已生成。",
-
   "rollback.summary": "检测到可回滚内容: 变更 {0}，新增 {1}，删除 {2}",
   "rollback.restore-changed": "[恢复变更] {0}",
   "rollback.restore-deleted": "[恢复删除] {0}",
@@ -104,14 +98,11 @@
   "rollback.recreate-dir": "[重建目录] {0}",
   "rollback.no-patch-dir": "当前目录下未找到 Patch 文件夹: {0}\n请把 Patch 文件夹复制到旧版本根目录后，再运行 rollback_patch。",
   "rollback.journal-removed": "已清理未完成的补丁应用日志。",
-
   "backup.created": "已备份到: {0}",
   "backup.skipped": "跳过: {0}",
   "backup.retry-exhausted": "备份文件重试已达上限 {0} 次: {1}",
   "backup.invalid-path": "无效的文件路径: {0}",
-
   "hash.buffer-realloc": "警告: SHA256 缓冲区重新分配触发",
-
   "ffi.oom": "内存不足，无法分配补丁缓冲区",
   "ffi.create-failed": "创建补丁失败、补丁格式不兼容或内部异常",
   "ffi.alloc-failed": "内存不足，无法分配输出缓冲区",
@@ -128,13 +119,10 @@
   "ffi.read-new-failed": "读取新文件失败 {0}: {1}",
   "ffi.write-output-failed": "写入输出文件失败 {0}: {1}",
   "ffi.read-output-failed": "流式补丁后读取失败 {0}: {1}",
-
   "path.traversal": "路径穿越检测: {0} 解析后超出基础目录",
   "path.absolute-component": "路径穿越检测: {0} 包含绝对路径组件",
-
   "error.generic": "错误: {0}",
   "error.prefix": "错误",
-
   "hdiff.oom-fallback": "注意: 内存不足（{0} GB 文件），自动切换到流式模式",
   "hdiff.oom-fallback-generic": "注意: 内存不足，自动切换到流式模式",
   "hdiff.size-fallback": "注意: 输入文件较大（{0} GB），直接使用流式模式",
@@ -142,7 +130,6 @@
   "hdiff.stream-fast-forced": "注意: 流式模式强制使用 fast 格式（precise 流式在内存不足时会静默生成损坏补丁）",
   "hdiff.mt-fallback": "注意: 多线程应用补丁失败，回退单线程重试 ({0})",
   "hdiff.stream-fallback": "注意: 内存不足，自动切换为流式模式",
-
   "manifest.format-invalid": "manifest format 版本格式无效: {0}",
   "manifest.changed-path-empty": "manifest changed[{0}] path 为空",
   "manifest.changed-missing-old-sha": "manifest changed[{0}] 缺少字段 'old_sha256'",
@@ -160,6 +147,5 @@
   "manifest.deleted-dir-empty": "manifest deleted_dirs[{0}] 路径为空",
   "manifest.not-found": "未找到补丁清单文件 '{0}'",
   "rollback.path-unsafe": "安全拒绝: 备份目录 {0} 不在 Patch 目录内",
-
   "fmt.pause-prompt": "\n按 Enter 键退出..."
 }

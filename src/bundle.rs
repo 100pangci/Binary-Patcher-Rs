@@ -13,7 +13,6 @@ use std::path::Path;
 #[allow(clippy::needless_pass_by_value)]
 pub fn build_patch_bundle(
     base_dir: &Path,
-    use_compression: bool,
     mode: PatchMode,
     format: PatchFormat,
 ) -> anyhow::Result<()> {
@@ -55,15 +54,8 @@ pub fn build_patch_bundle(
         match (old_path, new_path) {
             (Some(old), Some(new)) => {
                 let patch_output = patch_dir.join(format!("{relative_path}.patch"));
-                let entry = process_changed(
-                    old,
-                    new,
-                    &patch_output,
-                    use_compression,
-                    fast_format,
-                    &relative_path,
-                    &mode,
-                )?;
+                let entry =
+                    process_changed(old, new, &patch_output, fast_format, &relative_path, &mode)?;
                 if let Some(entry) = entry {
                     manifest.changed.push(entry);
                     changed_count += 1;
@@ -123,7 +115,6 @@ fn process_changed(
     old: &Path,
     new: &Path,
     patch_output: &Path,
-    use_compression: bool,
     fast_format: bool,
     relative_path: &str,
     mode: &PatchMode,
@@ -143,15 +134,8 @@ fn process_changed(
             if !fast_format {
                 eprintln!("{}", t!("hdiff.stream-fast-forced"));
             }
-            run_hdiffz_stream(
-                old,
-                new,
-                patch_output,
-                get_diff_thread_count(),
-                use_compression,
-                true,
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))?
+            run_hdiffz_stream(old, new, patch_output, get_diff_thread_count(), true)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
         }
         PatchMode::Memory => {
             let old_data =
@@ -163,12 +147,11 @@ fn process_changed(
                 &new_data,
                 patch_output,
                 get_diff_thread_count(),
-                use_compression,
                 fast_format,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?
         }
-        PatchMode::Auto => run_hdiffz(old, new, patch_output, use_compression, fast_format)?,
+        PatchMode::Auto => run_hdiffz(old, new, patch_output, fast_format)?,
     };
 
     print_patch_result(old_size, new_size, patch_output, thread_count)?;

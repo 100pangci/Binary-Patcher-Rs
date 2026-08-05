@@ -7,3 +7,6 @@ test_workspace/
 tmp_test/tmp_bench.ps1
 tmp_test/
 *.obj
+
+# 上游 issue 草稿（仅本地留存，不入库）
+docs/hdiffpatch-oom-issue.md

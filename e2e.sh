@@ -232,14 +232,6 @@ else
 fi
 
 if [ "$quick" -eq 0 ]; then
-  printf '\n' | "$bp" --no-compress create "$of" "$nf" "$s/p_nc.hdiff" >/dev/null 2>&1
-  printf '\n' | "$bp" apply "$of" "$s/p_nc.hdiff" "$s/out_nc.bin" >/dev/null 2>&1
-  if [ "$(hash_file "$nf")" = "$(hash_file "$s/out_nc.bin")" ]; then
-    P '--no-compress'
-  else
-    F '--no-compress'
-  fi
-
   printf '\n' | "$bp" --format fast create "$of" "$nf" "$s/p_f.hdiff" >/dev/null 2>&1
   printf '\n' | "$bp" apply "$of" "$s/p_f.hdiff" "$s/out_f.bin" >/dev/null 2>&1
   if [ "$(hash_file "$nf")" = "$(hash_file "$s/out_f.bin")" ]; then

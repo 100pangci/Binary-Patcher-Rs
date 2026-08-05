@@ -193,10 +193,6 @@ if ((HashFile $nf) -eq (HashFile "$s\out.bin")) { P '单文件 create+apply' }
 else { F '单文件' }
 
 if (-not $Quick) {
-    $null = "`n" | & $bp --no-compress create $of $nf $s\p_nc.hdiff  2>&1
-    $null = "`n" | & $bp apply $of $s\p_nc.hdiff $s\out_nc.bin 2>&1
-    if ((HashFile $nf) -eq (HashFile "$s\out_nc.bin")) { P '--no-compress' } else { F '--no-compress' }
-
     $null = "`n" | & $bp --format fast create $of $nf $s\p_f.hdiff  2>&1
     $null = "`n" | & $bp apply $of $s\p_f.hdiff $s\out_f.bin 2>&1
     if ((HashFile $nf) -eq (HashFile "$s\out_f.bin")) { P '--format fast' } else { F '--format fast' }

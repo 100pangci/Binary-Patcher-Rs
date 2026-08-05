@@ -17,7 +17,6 @@ unsafe extern "C" {
         out_patch: *mut *mut u8,
         out_patch_size: *mut usize,
         thread_num: i32,
-        use_compression: i32,
         fast_format: i32,
     ) -> i32;
 
@@ -26,7 +25,6 @@ unsafe extern "C" {
         new_file: *const c_char,
         patch_file: *const c_char,
         thread_num: i32,
-        use_compression: i32,
         fast_format: i32,
     ) -> i32;
 
@@ -116,7 +114,6 @@ pub fn create_patch(
     old_data: &[u8],
     new_data: &[u8],
     thread_num: u32,
-    use_compression: bool,
     fast_format: bool,
 ) -> Result<Vec<u8>, PatchError> {
     let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
@@ -137,7 +134,6 @@ pub fn create_patch(
             &mut out_patch,
             &mut out_patch_size,
             thread_num_i32,
-            i32::from(use_compression),
             i32::from(fast_format),
         )
     };
@@ -182,7 +178,6 @@ pub fn create_patch_file(
     new_file: &Path,
     patch_file: &Path,
     thread_num: u32,
-    use_compression: bool,
     fast_format: bool,
 ) -> Result<(), PatchError> {
     let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
@@ -201,7 +196,6 @@ pub fn create_patch_file(
             new_c.as_ptr(),
             patch_c.as_ptr(),
             thread_num_i32,
-            i32::from(use_compression),
             i32::from(fast_format),
         )
     };
