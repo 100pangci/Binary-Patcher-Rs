@@ -138,6 +138,8 @@
   "hdiff.oom-fallback": "注意: メモリ不足（{0} GB ファイル）、自動的にストリームモードに切り替えます",
   "hdiff.oom-fallback-generic": "注意: メモリ不足、自動的にストリームモードに切り替えます",
   "hdiff.size-fallback": "注意: 入力ファイルが大きいため（{0} GB）、直接ストリームモードを使用します",
+  "hdiff.size-fallback-apply": "注意: 出力データが大きいため（{0}）、直接ストリームモードを使用します",
+  "hdiff.stream-fast-forced": "注意: ストリームモードでは fast 形式を強制します（precise ストリームはメモリ不足時に破損したパッチを静かに生成します）",
   "hdiff.mt-fallback": "注意: マルチスレッドパッチ適用に失敗、シングルスレッドで再試行 ({0})",
   "hdiff.stream-fallback": "注意: メモリ不足、自動的にストリームモードに切り替えます",
 

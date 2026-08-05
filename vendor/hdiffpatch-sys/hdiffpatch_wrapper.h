@@ -25,10 +25,15 @@ int hdiffpatch_create_file(
     int fast_format
 );
 
+int hdiffpatch_apply_new_size(
+    const unsigned char* patch_data, size_t patch_size,
+    size_t* out_new_size
+);
+
 int hdiffpatch_apply(
     const unsigned char* old_data, size_t old_size,
     const unsigned char* patch_data, size_t patch_size,
-    unsigned char** out_new_data, size_t* out_new_size,
+    unsigned char* out_new_data, size_t out_new_size,
     int thread_num
 );
 

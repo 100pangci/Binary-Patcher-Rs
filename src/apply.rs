@@ -369,9 +369,9 @@ fn apply_changed_files(
         let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
         let new_data = apply_patch_auto(
-            &old_data,
+            old_data,
             &backup_path,
-            &patch_data,
+            patch_data,
             &target_path,
             thread_count,
         )?;

@@ -138,6 +138,8 @@
   "hdiff.oom-fallback": "Note: out of memory ({0} GB files), automatically switching to stream mode",
   "hdiff.oom-fallback-generic": "Note: out of memory, automatically switching to stream mode",
   "hdiff.size-fallback": "Note: input files are large ({0} GB), using stream mode directly",
+  "hdiff.size-fallback-apply": "Note: output data is large ({0}), using stream mode directly",
+  "hdiff.stream-fast-forced": "Note: stream mode forces the fast format (precise streaming silently produces corrupted patches under low memory)",
   "hdiff.mt-fallback": "Note: multi-thread patch application failed, retrying with single thread ({0})",
   "hdiff.stream-fallback": "Note: out of memory, automatically switching to stream mode",
 

@@ -1,6 +1,7 @@
 #include "hdiffpatch_wrapper.h"
 #include <cstring>
 #include <cstdlib>
+#include <new>
 #include <vector>
 #include <exception>
 #include <cstdio>
@@ -93,6 +94,9 @@ int hdiffpatch_create(
         if (!*out_patch) return -8;
         std::memcpy(*out_patch, diff.data(), diff.size());
         return 0;
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr, "hdiffpatch_create oom: std::bad_alloc\n");
+        return -8;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "hdiffpatch_create exception: %s\n", e.what());
         return -1;
@@ -164,6 +168,9 @@ int hdiffpatch_create_file(
                 &mtsets
             );
         }
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr, "hdiffpatch_create_file oom: std::bad_alloc\n");
+        ret = -8;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "hdiffpatch_create_file exception: %s\n", e.what());
         ret = -1;
@@ -176,10 +183,35 @@ cleanup:
     return ret;
 }
 
+int hdiffpatch_apply_new_size(
+    const unsigned char* patch_data, size_t patch_size,
+    size_t* out_new_size)
+{
+    try {
+        hpatch_singleCompressedDiffInfo diffInfo;
+        if (getSingleCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size)) {
+            *out_new_size = (size_t)diffInfo.newDataSize;
+            return 0;
+        }
+        hpatch_compressedDiffInfo cinfo;
+        std::memset(&cinfo, 0, sizeof(cinfo));
+        if (!getCompressedDiffInfo_mem(&cinfo, patch_data, patch_data + patch_size))
+            return -1;
+        *out_new_size = (size_t)cinfo.newDataSize;
+        return 0;
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr, "hdiffpatch_apply_new_size oom: std::bad_alloc\n");
+        return -8;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "hdiffpatch_apply_new_size exception: %s\n", e.what());
+        return -1;
+    }
+}
+
 int hdiffpatch_apply(
     const unsigned char* old_data, size_t old_size,
     const unsigned char* patch_data, size_t patch_size,
-    unsigned char** out_new_data, size_t* out_new_size,
+    unsigned char* out_new_data, size_t out_new_size,
     int thread_num)
 {
     try {
@@ -187,18 +219,13 @@ int hdiffpatch_apply(
             hpatch_singleCompressedDiffInfo diffInfo;
             if (getSingleCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size)) {
                 size_t new_size = (size_t)diffInfo.newDataSize;
-                *out_new_size = new_size;
-                if (new_size == 0) {
-                    *out_new_data = nullptr;
-                    return 0;
-                }
-                *out_new_data = (unsigned char*)std::malloc(new_size);
-                if (!*out_new_data) return -2;
+                if (new_size != out_new_size) return -1;
+                if (new_size == 0) return 0;
 
                 hpatch_TStreamOutput out_newStream;
                 hpatch_TStreamInput  oldStream;
                 hpatch_TStreamInput  diffStream;
-                mem_as_hStreamOutput(&out_newStream, *out_new_data, *out_new_data + new_size);
+                mem_as_hStreamOutput(&out_newStream, out_new_data, out_new_data + out_new_size);
                 mem_as_hStreamInput(&oldStream, old_data, old_data + old_size);
                 mem_as_hStreamInput(&diffStream, patch_data, patch_data + patch_size);
 
@@ -224,9 +251,6 @@ int hdiffpatch_apply(
                 );
 
                 if (!result) {
-                    std::free(*out_new_data);
-                    *out_new_data = nullptr;
-                    *out_new_size = 0;
                     return -3;
                 }
                 return 0;
@@ -239,41 +263,30 @@ int hdiffpatch_apply(
             if (!getCompressedDiffInfo_mem(&diffInfo, patch_data, patch_data + patch_size))
                 return -1;
 
-            size_t new_size = (size_t)diffInfo.newDataSize;
-            *out_new_size = new_size;
-            if (new_size == 0) {
-                *out_new_data = nullptr;
-                return 0;
-            }
-            *out_new_data = (unsigned char*)std::malloc(new_size);
-            if (!*out_new_data) return -2;
+            if ((size_t)diffInfo.newDataSize != out_new_size) return -1;
+            if (out_new_size == 0) return 0;
 
             hpatch_TDecompress* decompressPlugin = nullptr;
             if (diffInfo.compressedCount > 0)
                 decompressPlugin = &zlibDecompressPlugin;
 
             hpatch_BOOL result = patch_decompress_mem(
-                *out_new_data, *out_new_data + new_size,
+                out_new_data, out_new_data + out_new_size,
                 old_data, old_data + old_size,
                 patch_data, patch_data + patch_size,
                 decompressPlugin
             );
 
             if (!result) {
-                std::free(*out_new_data);
-                *out_new_data = nullptr;
-                *out_new_size = 0;
                 return -3;
             }
             return 0;
         }
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr, "hdiffpatch_apply oom: std::bad_alloc\n");
+        return -8;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "hdiffpatch_apply exception: %s\n", e.what());
-        if (*out_new_data) {
-            std::free(*out_new_data);
-            *out_new_data = nullptr;
-        }
-        *out_new_size = 0;
         return -4;
     }
 }
@@ -365,6 +378,9 @@ int hdiffpatch_apply_file(
             outStream.base.write(&outStream.base, 0, new_data.data(),
                                  new_data.data() + new_data.size());
         }
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr, "hdiffpatch_apply_file oom: std::bad_alloc\n");
+        ret = -8;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "hdiffpatch_apply_file exception: %s\n", e.what());
         ret = -4;

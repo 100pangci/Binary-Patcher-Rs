@@ -30,13 +30,19 @@ unsafe extern "C" {
         fast_format: i32,
     ) -> i32;
 
+    fn hdiffpatch_apply_new_size(
+        patch_data: *const u8,
+        patch_size: usize,
+        out_new_size: *mut usize,
+    ) -> i32;
+
     fn hdiffpatch_apply(
         old_data: *const u8,
         old_size: usize,
         patch_data: *const u8,
         patch_size: usize,
-        out_new_data: *mut *mut u8,
-        out_new_size: *mut usize,
+        out_new_data: *mut u8,
+        out_new_size: usize,
         thread_num: i32,
     ) -> i32;
 
@@ -210,6 +216,20 @@ pub fn create_patch_file(
     Ok(())
 }
 
+/// 解析补丁头获取输出数据大小（不分配输出缓冲）。
+pub fn patch_new_size(patch_data: &[u8]) -> Result<usize, PatchError> {
+    let mut new_size: usize = 0;
+    let ret =
+        unsafe { hdiffpatch_apply_new_size(patch_data.as_ptr(), patch_data.len(), &mut new_size) };
+    if ret != 0 {
+        return Err(PatchError {
+            code: ret,
+            message: error_msg(ret),
+        });
+    }
+    Ok(new_size)
+}
+
 pub fn apply_patch(
     old_data: &[u8],
     patch_data: &[u8],
@@ -220,9 +240,15 @@ pub fn apply_patch(
         message: "FFI mutex poisoned".to_string(),
     })?;
 
-    let mut out_new_data: *mut u8 = null_mut();
-    let mut out_new_size: usize = 0;
+    // 先解析补丁头部拿到输出大小，由 Rust 侧分配输出缓冲，
+    // C 库直接填充，避免 C 分配 + Rust 复制造成双缓冲峰值内存。
+    let new_size = patch_new_size(patch_data)?;
 
+    if new_size == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut new_data = vec![0u8; new_size];
     let thread_num_i32 = i32::try_from(thread_num).unwrap_or(i32::MAX);
     let ret = unsafe {
         hdiffpatch_apply(
@@ -230,44 +256,18 @@ pub fn apply_patch(
             old_data.len(),
             patch_data.as_ptr(),
             patch_data.len(),
-            &mut out_new_data,
-            &mut out_new_size,
+            new_data.as_mut_ptr(),
+            new_data.len(),
             thread_num_i32,
         )
     };
-
     if ret != 0 {
-        if !out_new_data.is_null() {
-            unsafe {
-                hdiffpatch_free(out_new_data as *mut c_void);
-            }
-        }
         return Err(PatchError {
             code: ret,
             message: error_msg(ret),
         });
     }
 
-    if out_new_data.is_null() && out_new_size > 0 {
-        return Err(PatchError {
-            code: -1,
-            message: t!("ffi.null-ptr"),
-        });
-    }
-
-    if out_new_size == 0 {
-        if !out_new_data.is_null() {
-            unsafe {
-                hdiffpatch_free(out_new_data as *mut c_void);
-            }
-        }
-        return Ok(Vec::new());
-    }
-
-    let new_data = unsafe { std::slice::from_raw_parts(out_new_data, out_new_size).to_vec() };
-    unsafe {
-        hdiffpatch_free(out_new_data as *mut c_void);
-    }
     Ok(new_data)
 }
 

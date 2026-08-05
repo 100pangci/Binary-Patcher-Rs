@@ -18,11 +18,18 @@
 - apply 日志条目在修改文件前落盘（临时文件 + rename 原子写入），崩溃时最多丢失一条记录
 - FFI 路径参数从 `&str` 改为 `&Path`：Unix 上按原始字节转换，非 UTF-8 文件名无损支持；Windows 保持 lossy（窄字符 API 限制）
 - 补丁大小/线程数输出改由调用处控制缩进，i18n 值移除 `"  - "` 前缀，`print_patch_result` 统一四种模式的输出格式
+- **OOM 降级链路修复**（`ulimit -v` 实测模拟内存不足）：
+  - wrapper 将 `std::bad_alloc` 映射为 OOM 码 -8，OOM 可触发流式降级而非普通错误
+  - OOM 流式回退前释放已读入的文件数据（此前残留内存会导致流式再次 OOM，且 HDiffPatch 内部线程池异常展开时直接 terminate）
+  - apply 接口改为两段式（解析补丁头 → Rust 分配输出缓冲 → C 库填充），消除 C 分配 + Rust 复制造成的双缓冲峰值内存
+  - apply 侧新增大小阈值决策：old + new 超过 1 GiB 直接流式，避免 Rust 分配输出缓冲时 OOM（Rust 分配失败不可捕获，直接 abort）
+  - **流式模式强制 fast 格式**：precise 流式算法（TDigestMatcher + serialize）在内存不足时会在 C 层静默截断输出，生成损坏补丁且不报错（HDiffPatch 库固有问题）；fast 格式（window matcher）内存可控且可靠，precise 仅内存路径可用
 
 ### Fixed
 - bundle 模式补丁信息中 `{0}` 占位符未替换，`print_patch_result` 和 `process_changed_auto` 未传递参数导致占位符字面输出
 - 单文件 apply（`apply_single_patch`）中 `apply.output-generated` / `main.patch-size` 未传参数导致 `{0}` 字面输出，以及标签前缀导致的重复缩进
 - 移除 `--copy-scripts` 死代码参数（`cli.rs`）
+- 流式 apply 分支未释放 `old_data`，内存受限时额外失败
 
 ## [v1.2.0] — 2026-07-27
 

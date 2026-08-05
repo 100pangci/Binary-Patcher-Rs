@@ -138,6 +138,8 @@
   "hdiff.oom-fallback": "注意: 内存不足（{0} GB 文件），自动切换到流式模式",
   "hdiff.oom-fallback-generic": "注意: 内存不足，自动切换到流式模式",
   "hdiff.size-fallback": "注意: 输入文件较大（{0} GB），直接使用流式模式",
+  "hdiff.size-fallback-apply": "注意: 输出数据较大（{0}），直接使用流式模式",
+  "hdiff.stream-fast-forced": "注意: 流式模式强制使用 fast 格式（precise 流式在内存不足时会静默生成损坏补丁）",
   "hdiff.mt-fallback": "注意: 多线程应用补丁失败，回退单线程重试 ({0})",
   "hdiff.stream-fallback": "注意: 内存不足，自动切换为流式模式",
 

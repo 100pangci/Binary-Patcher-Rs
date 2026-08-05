@@ -139,15 +139,20 @@ fn process_changed(
     let new_size = std::fs::metadata(new)?.len();
 
     let thread_count = match mode {
-        PatchMode::Stream => run_hdiffz_stream(
-            old,
-            new,
-            patch_output,
-            get_diff_thread_count(),
-            use_compression,
-            fast_format,
-        )
-        .map_err(|e| anyhow::anyhow!("{e}"))?,
+        PatchMode::Stream => {
+            if !fast_format {
+                eprintln!("{}", t!("hdiff.stream-fast-forced"));
+            }
+            run_hdiffz_stream(
+                old,
+                new,
+                patch_output,
+                get_diff_thread_count(),
+                use_compression,
+                true,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+        }
         PatchMode::Memory => {
             let old_data =
                 std::fs::read(old).with_context(|| t!("bundle.failed-read-old", old.display()))?;
