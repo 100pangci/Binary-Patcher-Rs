@@ -22,10 +22,10 @@
   "bp.reading-patch": "パッチファイルを読み込み中: {0}",
   "main.calling-hdiff": "HDiffPatch を呼び出してパッチを生成中...",
   "main.patch-created": "パッチの作成に成功しました！",
-  "main.threads-used": "  - 使用スレッド数: {0}",
-  "main.old-size": "  - 旧ファイルサイズ: {0}",
-  "main.new-size": "  - 新ファイルサイズ: {0}",
-  "main.patch-size": "  - パッチファイルサイズ: {0}",
+  "main.threads-used": "使用スレッド数: {0}",
+  "main.old-size": "旧ファイルサイズ: {0}",
+  "main.new-size": "新ファイルサイズ: {0}",
+  "main.patch-size": "パッチファイルサイズ: {0}",
   "main.cwd-failed": "警告: カレントディレクトリを取得できません ({0})、'.' を作業ディレクトリとして使用します",
 
   "bundle.will-clear-patch": "注意: 既存の Patch ディレクトリをクリアします: {0}",
@@ -79,6 +79,11 @@
   "apply.complete": "\nパックパッチの適用が完了しました！",
   "apply.rollback-hint": "ロールバックするには、同じディレクトリで rollback_patch を実行してください。",
   "apply.rollback-triggered": "パッチ適用中にエラーが発生しました。すべての変更をロールバックしています...",
+  "apply.journal-found": "前回の未完了のパッチ適用を検出しました（停電やプロセス中断が原因の可能性があります）",
+  "apply.journal-prompt": "前回の変更をロールバックしますか？ [R]ollback / [A]bort: ",
+  "apply.journal-abort": "中止しました。次回 apply_patch を実行するか、Patch/.apply_journal.json を手動で削除してください。",
+  "apply.journal-rolled-back": "ジャーナルから中断された変更をロールバックしました。",
+  "apply.journal-corrupt": "パッチジャーナルが破損しています: {0}（ファイル: {1}）\nrollback_patch でバックアップを復元するか、ジャーナルファイルを削除して再適用してください。",
   "apply.output-generated": "出力ファイル '{0}' が生成されました。",
 
   "rollback.summary": "ロールバック可能な内容を検出: 変更 {0}、追加 {1}、削除 {2}",
@@ -98,6 +103,7 @@
   "rollback.cleanup-skipped": "バックアップのクリーンアップをスキップしました。",
   "rollback.recreate-dir": "[ディレクトリ再作成] {0}",
   "rollback.no-patch-dir": "カレントディレクトリに Patch フォルダが見つかりません: {0}\nPatch フォルダを旧バージョンのルートディレクトリにコピーしてから rollback_patch を実行してください。",
+  "rollback.journal-removed": "未完了のパッチ適用ジャーナルをクリーンアップしました。",
 
   "backup.created": "バックアップ先: {0}",
   "backup.skipped": "スキップ: {0}",
@@ -131,6 +137,7 @@
 
   "hdiff.oom-fallback": "注意: メモリ不足（{0} GB ファイル）、自動的にストリームモードに切り替えます",
   "hdiff.oom-fallback-generic": "注意: メモリ不足、自動的にストリームモードに切り替えます",
+  "hdiff.size-fallback": "注意: 入力ファイルが大きいため（{0} GB）、直接ストリームモードを使用します",
   "hdiff.mt-fallback": "注意: マルチスレッドパッチ適用に失敗、シングルスレッドで再試行 ({0})",
   "hdiff.stream-fallback": "注意: メモリ不足、自動的にストリームモードに切り替えます",
 

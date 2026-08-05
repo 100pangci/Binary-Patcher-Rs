@@ -79,6 +79,11 @@
   "apply.complete": "Full patch bundle applied successfully!",
   "apply.rollback-hint": "To roll back, run rollback_patch in the same directory.",
   "apply.rollback-triggered": "Error occurred during patching. Rolling back all changes...",
+  "apply.journal-found": "Detected an unfinished patch application (possibly caused by power loss or process interruption)",
+  "apply.journal-prompt": "Roll back the previous changes? [R]ollback / [A]bort: ",
+  "apply.journal-abort": "Aborted. Run apply_patch again later to retry, or delete Patch/.apply_journal.json manually.",
+  "apply.journal-rolled-back": "Rolled back the interrupted changes from the journal.",
+  "apply.journal-corrupt": "Patch journal is corrupted: {0} (file: {1})\nRun rollback_patch to restore backups, or delete the journal file and re-apply.",
   "apply.output-generated": "Output file '{0}' has been generated.",
 
   "rollback.summary": "Detected rollback content: changed {0}, added {1}, deleted {2}",
@@ -98,6 +103,7 @@
   "rollback.cleanup-skipped": "Backup cleanup skipped.",
   "rollback.recreate-dir": "[Recreate Directory] {0}",
   "rollback.no-patch-dir": "Patch folder not found in current directory: {0}\nCopy the Patch folder to the old version root directory and run rollback_patch again.",
+  "rollback.journal-removed": "Cleaned up the unfinished patch journal.",
 
   "backup.created": "Backed up to: {0}",
   "backup.skipped": "Skipped: {0}",
@@ -131,6 +137,7 @@
 
   "hdiff.oom-fallback": "Note: out of memory ({0} GB files), automatically switching to stream mode",
   "hdiff.oom-fallback-generic": "Note: out of memory, automatically switching to stream mode",
+  "hdiff.size-fallback": "Note: input files are large ({0} GB), using stream mode directly",
   "hdiff.mt-fallback": "Note: multi-thread patch application failed, retrying with single thread ({0})",
   "hdiff.stream-fallback": "Note: out of memory, automatically switching to stream mode",
 

@@ -2,8 +2,8 @@ use crate::cli::PatchFormat;
 use crate::cli::PatchMode;
 use crate::fmt::format_size;
 use crate::fs::relative_maps;
-use crate::hash::{sha256_of_bytes, sha256_of_file};
-use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz_mem, run_hdiffz_stream};
+use crate::hash::sha256_of_file;
+use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{AddedEntry, ChangedEntry, DeletedEntry, INSTRUCTIONS_NAME, Manifest};
 use crate::path::ensure_parent_dir;
 use crate::t;
@@ -55,32 +55,15 @@ pub fn build_patch_bundle(
         match (old_path, new_path) {
             (Some(old), Some(new)) => {
                 let patch_output = patch_dir.join(format!("{relative_path}.patch"));
-                let entry = match mode {
-                    PatchMode::Stream => process_changed_stream(
-                        old,
-                        new,
-                        &patch_output,
-                        use_compression,
-                        fast_format,
-                        &relative_path,
-                    )?,
-                    PatchMode::Memory => process_changed_mem(
-                        old,
-                        new,
-                        &patch_output,
-                        use_compression,
-                        fast_format,
-                        &relative_path,
-                    )?,
-                    PatchMode::Auto => process_changed_auto(
-                        old,
-                        new,
-                        &patch_output,
-                        use_compression,
-                        fast_format,
-                        &relative_path,
-                    )?,
-                };
+                let entry = process_changed(
+                    old,
+                    new,
+                    &patch_output,
+                    use_compression,
+                    fast_format,
+                    &relative_path,
+                    &mode,
+                )?;
                 if let Some(entry) = entry {
                     manifest.changed.push(entry);
                     changed_count += 1;
@@ -136,13 +119,14 @@ pub fn build_patch_bundle(
     Ok(())
 }
 
-fn process_changed_stream(
+fn process_changed(
     old: &Path,
     new: &Path,
     patch_output: &Path,
     use_compression: bool,
     fast_format: bool,
     relative_path: &str,
+    mode: &PatchMode,
 ) -> anyhow::Result<Option<ChangedEntry>> {
     let old_hash = sha256_of_file(old)?;
     let new_hash = sha256_of_file(new)?;
@@ -150,99 +134,39 @@ fn process_changed_stream(
         return Ok(None);
     }
     println!("{}", t!("bundle.changed", relative_path));
-    create_patch_stream(old, new, patch_output, use_compression, fast_format)?;
-    Ok(Some(ChangedEntry {
-        path: relative_path.to_string(),
-        old_sha256: old_hash,
-        new_sha256: new_hash,
-        patch_file: format!("{relative_path}.patch"),
-    }))
-}
 
-fn process_changed_mem(
-    old: &Path,
-    new: &Path,
-    patch_output: &Path,
-    use_compression: bool,
-    fast_format: bool,
-    relative_path: &str,
-) -> anyhow::Result<Option<ChangedEntry>> {
-    let old_data = std::fs::read(old)?;
-    let new_data = std::fs::read(new)?;
-    let old_hash = sha256_of_bytes(&old_data);
-    let new_hash = sha256_of_bytes(&new_data);
-    if old_hash == new_hash {
-        return Ok(None);
-    }
-    println!("{}", t!("bundle.changed", relative_path));
-    create_patch_mem(
-        &old_data,
-        &new_data,
-        patch_output,
-        use_compression,
-        fast_format,
-    )?;
-    Ok(Some(ChangedEntry {
-        path: relative_path.to_string(),
-        old_sha256: old_hash,
-        new_sha256: new_hash,
-        patch_file: format!("{relative_path}.patch"),
-    }))
-}
+    let old_size = std::fs::metadata(old)?.len();
+    let new_size = std::fs::metadata(new)?.len();
 
-fn process_changed_auto(
-    old: &Path,
-    new: &Path,
-    patch_output: &Path,
-    use_compression: bool,
-    fast_format: bool,
-    relative_path: &str,
-) -> anyhow::Result<Option<ChangedEntry>> {
-    let (od, nd) = try_read_old_new(old, new)?;
-    let old_hash = sha256_of_bytes(&od);
-    let new_hash = sha256_of_bytes(&nd);
-    if old_hash == new_hash {
-        return Ok(None);
-    }
-
-    println!("{}", t!("bundle.changed", relative_path));
-    match run_hdiffz_mem(
-        &od,
-        &nd,
-        patch_output,
-        get_diff_thread_count(),
-        use_compression,
-        fast_format,
-    ) {
-        Ok(_) => {
-            let patch_size = std::fs::metadata(patch_output)?.len();
-            println!("{}", t!("bundle.patch-success"));
-            println!(
-                "    - {}: {}",
-                t!("main.old-size"),
-                format_size(od.len() as u64)
-            );
-            println!(
-                "    - {}: {}",
-                t!("main.new-size"),
-                format_size(nd.len() as u64)
-            );
-            println!(
-                "    - {}: {}",
-                t!("main.patch-size"),
-                format_size(patch_size)
-            );
+    let thread_count = match mode {
+        PatchMode::Stream => run_hdiffz_stream(
+            old,
+            new,
+            patch_output,
+            get_diff_thread_count(),
+            use_compression,
+            fast_format,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?,
+        PatchMode::Memory => {
+            let old_data =
+                std::fs::read(old).with_context(|| t!("bundle.failed-read-old", old.display()))?;
+            let new_data =
+                std::fs::read(new).with_context(|| t!("bundle.failed-read-new", new.display()))?;
+            run_hdiffz_mem(
+                &old_data,
+                &new_data,
+                patch_output,
+                get_diff_thread_count(),
+                use_compression,
+                fast_format,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
         }
-        Err(e) if e.is_oom() => {
-            let total_gb = (od.len() + nd.len()) as f64 / (1u64 << 30) as f64;
-            eprintln!(
-                "{}",
-                t!("bundle.oom-fallback-stream", format!("{:.1}", total_gb))
-            );
-            create_patch_stream(old, new, patch_output, use_compression, fast_format)?;
-        }
-        Err(e) => anyhow::bail!("{}", t!("bundle.failed-create", relative_path, e)),
-    }
+        PatchMode::Auto => run_hdiffz(old, new, patch_output, use_compression, fast_format)?,
+    };
+
+    print_patch_result(old_size, new_size, patch_output, thread_count)?;
     Ok(Some(ChangedEntry {
         path: relative_path.to_string(),
         old_sha256: old_hash,
@@ -260,72 +184,12 @@ fn print_patch_result(
     let patch_size = std::fs::metadata(patch_file)?.len();
     println!("  {}", "-".repeat(30));
     println!("  {}", t!("bundle.patch-success"));
-    println!("    - {}: {}", t!("main.threads-used"), thread_count);
-    println!("    - {}: {}", t!("main.old-size"), format_size(old_size));
-    println!("    - {}: {}", t!("main.new-size"), format_size(new_size));
-    println!(
-        "    - {}: {}",
-        t!("main.patch-size"),
-        format_size(patch_size)
-    );
+    println!("    - {}", t!("main.threads-used", thread_count));
+    println!("    - {}", t!("main.old-size", format_size(old_size)));
+    println!("    - {}", t!("main.new-size", format_size(new_size)));
+    println!("    - {}", t!("main.patch-size", format_size(patch_size)));
     println!("  {}", "-".repeat(30));
     Ok(())
-}
-
-fn create_patch_mem(
-    old_data: &[u8],
-    new_data: &[u8],
-    patch_file: &Path,
-    use_compression: bool,
-    fast_format: bool,
-) -> anyhow::Result<()> {
-    ensure_parent_dir(patch_file)?;
-    let old_size = old_data.len() as u64;
-    let new_size = new_data.len() as u64;
-
-    println!("{}", t!("bundle.calling-hdiff"));
-    let thread_count = run_hdiffz_mem(
-        old_data,
-        new_data,
-        patch_file,
-        get_diff_thread_count(),
-        use_compression,
-        fast_format,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    print_patch_result(old_size, new_size, patch_file, thread_count)
-}
-
-fn create_patch_stream(
-    old_file: &Path,
-    new_file: &Path,
-    patch_file: &Path,
-    use_compression: bool,
-    fast_format: bool,
-) -> anyhow::Result<()> {
-    ensure_parent_dir(patch_file)?;
-    let old_size = std::fs::metadata(old_file)?.len();
-    let new_size = std::fs::metadata(new_file)?.len();
-
-    println!("{}", t!("bundle.calling-hdiff"));
-    let thread_count = run_hdiffz_stream(
-        old_file,
-        new_file,
-        patch_file,
-        get_diff_thread_count(),
-        use_compression,
-        fast_format,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    print_patch_result(old_size, new_size, patch_file, thread_count)
-}
-
-fn try_read_old_new(old: &Path, new: &Path) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let old_data =
-        std::fs::read(old).with_context(|| t!("bundle.failed-read-old", old.display()))?;
-    let new_data =
-        std::fs::read(new).with_context(|| t!("bundle.failed-read-new", new.display()))?;
-    Ok((old_data, new_data))
 }
 
 fn write_patch_instructions(patch_dir: &Path) -> anyhow::Result<()> {

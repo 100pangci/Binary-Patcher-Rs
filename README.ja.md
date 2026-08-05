@@ -158,7 +158,8 @@ binary_patcher
 │   ├── mod.rs               # ビルドオーケストレーション
 │   ├── download.rs          # HDiffPatch / zlib を自動ダウンロード
 │   └── compile.rs           # C/C++ コンパイル
-├── e2e.ps1                  # エンドツーエンド CLI テスト
+├── e2e.ps1                  # エンドツーエンド CLI テスト（Windows）
+├── e2e.sh                   # エンドツーエンド CLI テスト（Linux）
 ├── LICENSE                  # MPL-2.0
 ├── README.md                # 中文
 ├── README.en.md             # English

@@ -137,5 +137,11 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
         std::fs::remove_dir_all(&staging_dir)?;
     }
 
+    let journal_path = patch_dir.join(crate::apply::JOURNAL_FILE_NAME);
+    if journal_path.exists() {
+        std::fs::remove_file(&journal_path)?;
+        println!("{}", t!("rollback.journal-removed"));
+    }
+
     Ok(())
 }

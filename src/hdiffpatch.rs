@@ -5,11 +5,18 @@ use std::path::Path;
 const DEFAULT_THREADS: u32 = 4;
 const MAX_PATCH_THREADS: u32 = 5;
 const MAX_DIFF_THREADS: u32 = 32;
+/// 内存模式允许的 old + new 总大小上限（字节）。
+/// 超过该阈值时直接走流式，避免先把整个文件读进内存再 OOM。
+const MAX_MEM_DIFF_BYTES: u64 = 1 << 30;
 
 fn clamp_thread_count(max: u32) -> u32 {
     let cpu_count = std::thread::available_parallelism()
         .map_or(DEFAULT_THREADS as usize, std::num::NonZeroUsize::get);
     (cpu_count.saturating_sub(1)).max(1).min(max as usize) as u32
+}
+
+fn should_stream_by_size(old_size: u64, new_size: u64) -> bool {
+    old_size.saturating_add(new_size) > MAX_MEM_DIFF_BYTES
 }
 
 pub fn get_recommended_thread_count() -> u32 {
@@ -61,9 +68,9 @@ pub fn run_hdiffz_stream(
     })?;
 
     ffi::create_patch_file(
-        &old_file.to_string_lossy(),
-        &new_file.to_string_lossy(),
-        &patch_file.to_string_lossy(),
+        old_file,
+        new_file,
+        patch_file,
         thread_count,
         use_compression,
         fast_format,
@@ -82,34 +89,42 @@ pub fn run_hdiffz(
 
     crate::path::ensure_parent_dir(patch_file)?;
 
-    let mem_result = (|| -> Result<(), ffi::PatchError> {
-        let old_data = std::fs::read(old_file).map_err(|e| ffi::PatchError {
-            code: -1,
-            message: t!("ffi.read-old-failed", old_file.display(), e),
-        })?;
-        let new_data = std::fs::read(new_file).map_err(|e| ffi::PatchError {
-            code: -1,
-            message: t!("ffi.read-new-failed", new_file.display(), e),
-        })?;
-        let patch_data = ffi::create_patch(
-            &old_data,
-            &new_data,
+    let old_size = std::fs::metadata(old_file).map(|m| m.len()).ok();
+    let new_size = std::fs::metadata(new_file).map(|m| m.len()).ok();
+
+    if let (Some(old_size), Some(new_size)) = (old_size, new_size)
+        && should_stream_by_size(old_size, new_size)
+    {
+        let total_gb = (old_size + new_size) as f64 / (1u64 << 30) as f64;
+        eprintln!("{}", t!("hdiff.size-fallback", format!("{:.1}", total_gb)));
+        return run_hdiffz_stream(
+            old_file,
+            new_file,
+            patch_file,
             thread_count,
             use_compression,
             fast_format,
-        )?;
-        std::fs::write(patch_file, &patch_data).map_err(|e| ffi::PatchError {
-            code: -1,
-            message: t!("ffi.write-failed", patch_file.display(), e),
-        })?;
-        Ok(())
-    })();
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"));
+    }
+
+    let old_data = std::fs::read(old_file)
+        .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-old-failed", old_file.display(), e)))?;
+    let new_data = std::fs::read(new_file)
+        .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-new-failed", new_file.display(), e)))?;
+
+    let mem_result = run_hdiffz_mem(
+        &old_data,
+        &new_data,
+        patch_file,
+        thread_count,
+        use_compression,
+        fast_format,
+    );
 
     match mem_result {
-        Ok(()) => Ok(thread_count),
+        Ok(_) => Ok(thread_count),
         Err(e) if e.is_oom() => {
-            let old_size = std::fs::metadata(old_file).map(|m| m.len()).ok();
-            let new_size = std::fs::metadata(new_file).map(|m| m.len()).ok();
             match (old_size, new_size) {
                 (Some(os), Some(ns)) => {
                     let total_gb = (os + ns) as f64 / (1u64 << 30) as f64;
@@ -154,13 +169,8 @@ pub fn apply_patch_auto(
         }
         Err(e) if e.is_oom() => {
             eprintln!("{}", t!("hdiff.stream-fallback"));
-            ffi::apply_patch_file(
-                &old_file.to_string_lossy(),
-                patch_data,
-                &output_file.to_string_lossy(),
-                thread_count,
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ffi::apply_patch_file(old_file, patch_data, output_file, thread_count)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             let new_data = std::fs::read(output_file).map_err(|e| {
                 anyhow::anyhow!("{}", t!("ffi.read-output-failed", output_file.display(), e))
             })?;

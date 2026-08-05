@@ -158,7 +158,8 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 │   ├── mod.rs               # Build orchestration
 │   ├── download.rs          # Auto-download HDiffPatch / zlib
 │   └── compile.rs           # C/C++ compilation
-├── e2e.ps1                  # End-to-end CLI smoke test
+├── e2e.ps1                  # End-to-end CLI smoke test (Windows)
+├── e2e.sh                   # End-to-end CLI smoke test (Linux)
 ├── LICENSE                  # MPL-2.0
 ├── README.md                # 中文
 ├── README.en.md             # English

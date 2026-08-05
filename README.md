@@ -149,7 +149,8 @@ binary_patcher
 │   ├── mod.rs               # 构建编排
 │   ├── download.rs          # 自动下载 HDiffPatch / zlib
 │   └── compile.rs           # C/C++ 编译
-├── e2e.ps1                  # 端到端 CLI 冒烟测试
+├── e2e.ps1                  # 端到端 CLI 冒烟测试（Windows）
+├── e2e.sh                   # 端到端 CLI 冒烟测试（Linux）
 ├── LICENSE                  # MPL-2.0 许可证
 ├── README.md                # 中文说明
 ├── README.en.md             # English

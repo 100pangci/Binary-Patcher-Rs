@@ -32,10 +32,10 @@ fn create_single_patch(
 
     println!("{}", "-".repeat(30));
     println!("{}", t!("main.patch-created"));
-    println!("{}", t!("main.threads-used", thread_count));
-    println!("{}", t!("main.old-size", format_size(old_size)));
-    println!("{}", t!("main.new-size", format_size(new_size)));
-    println!("{}", t!("main.patch-size", format_size(patch_size)));
+    println!("  - {}", t!("main.threads-used", thread_count));
+    println!("  - {}", t!("main.old-size", format_size(old_size)));
+    println!("  - {}", t!("main.new-size", format_size(new_size)));
+    println!("  - {}", t!("main.patch-size", format_size(patch_size)));
     println!("{}", "-".repeat(30));
 
     Ok(())

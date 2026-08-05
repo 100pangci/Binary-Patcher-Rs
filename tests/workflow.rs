@@ -38,8 +38,22 @@ fn test_full_workflow() {
     let game_patch = game_dir.join("Patch");
     copy_tree_files(&patch_dir, &game_patch);
 
+    // A stale empty journal must be cleaned up silently before applying
+    std::fs::write(
+        game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME),
+        "[]",
+    )
+    .unwrap();
+
     // Apply bundle
     binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+
+    assert!(
+        !game_patch
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "journal should be removed after a successful apply"
+    );
 
     // Verify applied state matches New/
     let new_files = all_file_relpaths(&base_dir.join("New"));
@@ -60,8 +74,22 @@ fn test_full_workflow() {
         "directory deep/nested/ should have been removed"
     );
 
+    // A stale journal must be cleaned up by rollback as well
+    std::fs::write(
+        game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME),
+        r#"[{"type":"patched","path":"config.ini"}]"#,
+    )
+    .unwrap();
+
     // Rollback
     binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert!(
+        !game_patch
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "journal should be removed after rollback"
+    );
 
     // Verify rolled back state matches Old/
     let old_files = all_file_relpaths(&base_dir.join("Old"));
@@ -437,4 +465,106 @@ fn test_rollback_cleanup_empty_dirs() {
         !game_dir.join("new_sub").exists(),
         "empty directory new_sub/ should be removed after rollback"
     );
+}
+
+// ===========================================================================
+// Crash recovery: persistent journal
+// ===========================================================================
+
+#[test]
+fn test_journal_rollback_restores_all_entry_types() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let backup_root = patch_dir.join(".backup_before_patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+
+    // patched: target holds the patched content, backup holds the original
+    std::fs::create_dir_all(base.join("sub")).unwrap();
+    std::fs::write(base.join("sub/data.txt"), "PATCHED").unwrap();
+    std::fs::create_dir_all(backup_root.join("sub")).unwrap();
+    std::fs::write(
+        backup_root.join("sub/data.txt.backup_before_patch"),
+        "ORIGINAL",
+    )
+    .unwrap();
+
+    // deleted: target was removed, backup exists
+    std::fs::create_dir_all(&backup_root).unwrap();
+    std::fs::write(
+        backup_root.join("gone.txt.backup_before_patch"),
+        "ORIGINAL GONE",
+    )
+    .unwrap();
+
+    // added (had_backup=false): extra file left on disk, must be removed
+    std::fs::write(base.join("extra.txt"), "EXTRA").unwrap();
+
+    // deleted_dir: directory missing, must be recreated
+    assert!(!base.join("removed_dir").exists());
+
+    std::fs::write(
+        &journal_path,
+        r#"[
+            {"type":"patched","path":"sub/data.txt"},
+            {"type":"deleted","path":"gone.txt"},
+            {"type":"added","path":"extra.txt","had_backup":false},
+            {"type":"deleted_dir","path":"removed_dir"}
+        ]"#,
+    )
+    .unwrap();
+
+    binary_patcher::apply::rollback_from_journal(base, &patch_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(base.join("sub/data.txt")).unwrap(),
+        "ORIGINAL"
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("gone.txt")).unwrap(),
+        "ORIGINAL GONE"
+    );
+    assert!(!base.join("extra.txt").exists());
+    assert!(base.join("removed_dir").is_dir());
+    assert!(
+        !journal_path.exists(),
+        "journal should be removed after rollback"
+    );
+}
+
+#[test]
+fn test_journal_rejects_path_traversal() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    std::fs::write(
+        &journal_path,
+        r#"[{"type":"patched","path":"../evil.txt"}]"#,
+    )
+    .unwrap();
+
+    let result = binary_patcher::apply::rollback_from_journal(base, &patch_dir);
+    assert!(result.is_err());
+    assert!(
+        journal_path.exists(),
+        "journal must be preserved when recovery fails"
+    );
+}
+
+#[test]
+fn test_journal_malformed_json_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    std::fs::write(&journal_path, "{not valid json").unwrap();
+
+    let result = binary_patcher::apply::rollback_from_journal(base, &patch_dir);
+    assert!(result.is_err());
+    assert!(journal_path.exists());
 }

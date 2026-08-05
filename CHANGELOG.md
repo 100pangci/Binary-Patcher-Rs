@@ -5,14 +5,24 @@
 ### Added
 - `[lints]` 配置：crate 级声明 rustc/clippy 检查（含 pedantic 选择性启用），不再依赖 CI 参数
 - 测试按模块拆分：`tests/integration_test.rs`（919 行）拆分为 `common/` + 6 个单元测试文件 + `workflow.rs`
+- 持久化应用日志 `Patch/.apply_journal.json`：apply 中断（断电/进程终止）后再次运行可检测并回滚未完成的更改，支持 `[R]ollback / [A]bort` 选择
+- `e2e.sh`：Linux 端到端 CLI 冒烟测试（对应 Windows 的 e2e.ps1，8 段全流程 + 计数断言）
+- 崩溃恢复集成测试：journal 四类条目恢复、路径穿越拒绝、损坏 JSON 处理
 
 ### Changed
 - `build_script/compile.rs` 重构：`compile_all` 拆分为 `compile_c` / `compile_cpp` / `new_build` / `includes_for`
 - `build_script/download.rs` 修复 5 处 clippy pedantic 告警（manual_assert、uninlined_format_args 等）
 - 修复 25 处 clippy pedantic 告警：FFI bool→i32 改用 `i32::from`、`match` 改为 `let...else` / `is_err()`、`map_or` 替代 `map().unwrap_or()` 等
+- bundle 模式 `process_changed_stream/mem/auto` 三函数合并为按模式分派的一个函数，移除 `create_patch_mem` / `create_patch_stream` / `try_read_old_new` 重复代码
+- auto 模式按文件大小阈值决策：old + new 超过 1 GiB 直接走流式，避免先整体读入内存再 OOM 回退（OOM 回退保留兜底）
+- apply 日志条目在修改文件前落盘（临时文件 + rename 原子写入），崩溃时最多丢失一条记录
+- FFI 路径参数从 `&str` 改为 `&Path`：Unix 上按原始字节转换，非 UTF-8 文件名无损支持；Windows 保持 lossy（窄字符 API 限制）
+- 补丁大小/线程数输出改由调用处控制缩进，i18n 值移除 `"  - "` 前缀，`print_patch_result` 统一四种模式的输出格式
 
 ### Fixed
 - bundle 模式补丁信息中 `{0}` 占位符未替换，`print_patch_result` 和 `process_changed_auto` 未传递参数导致占位符字面输出
+- 单文件 apply（`apply_single_patch`）中 `apply.output-generated` / `main.patch-size` 未传参数导致 `{0}` 字面输出，以及标签前缀导致的重复缩进
+- 移除 `--copy-scripts` 死代码参数（`cli.rs`）
 
 ## [v1.2.0] — 2026-07-27
 

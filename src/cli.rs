@@ -32,9 +32,6 @@ pub fn apply_base_arg_help(cmd: Command, base_key: &str) -> Command {
 #[derive(Parser)]
 #[command(name = "binary_patcher")]
 pub struct Cli {
-    #[arg(long = "copy-scripts", default_value_t = false, hide = true)]
-    pub copy_scripts: bool,
-
     #[arg(
         long = "no-compress",
         default_value_t = false,

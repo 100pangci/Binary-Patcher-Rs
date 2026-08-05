@@ -22,10 +22,10 @@
   "bp.reading-patch": "正在读取补丁文件: {0}",
   "main.calling-hdiff": "正在调用 HDiffPatch 生成补丁...",
   "main.patch-created": "补丁创建成功！",
-  "main.threads-used": "  - 使用线程数: {0}",
-  "main.old-size": "  - 旧文件大小: {0}",
-  "main.new-size": "  - 新文件大小: {0}",
-  "main.patch-size": "  - 补丁文件大小: {0}",
+  "main.threads-used": "使用线程数: {0}",
+  "main.old-size": "旧文件大小: {0}",
+  "main.new-size": "新文件大小: {0}",
+  "main.patch-size": "补丁文件大小: {0}",
   "main.cwd-failed": "警告: 无法获取当前目录 ({0})，使用 '.' 作为工作目录",
 
   "bundle.will-clear-patch": "注意: 将清空已有的 Patch 目录: {0}",
@@ -79,6 +79,11 @@
   "apply.complete": "\n整包补丁应用完成！",
   "apply.rollback-hint": "如果需要回滚，请使用同目录下的 rollback_patch 恢复。",
   "apply.rollback-triggered": "打补丁过程中发生错误，正在自动回滚所有变更...",
+  "apply.journal-found": "检测到上次未完成的补丁应用（可能因断电或进程中断导致）",
+  "apply.journal-prompt": "是否回滚上次的更改? [R]ollback / [A]bort: ",
+  "apply.journal-abort": "已中止。可下次运行 apply_patch 再处理，或手动删除 Patch/.apply_journal.json",
+  "apply.journal-rolled-back": "已从日志回滚上次中断的更改。",
+  "apply.journal-corrupt": "补丁应用日志损坏: {0}（文件: {1}）\n可运行 rollback_patch 恢复备份，或删除日志文件后重新应用。",
   "apply.output-generated": "输出文件 '{0}' 已生成。",
 
   "rollback.summary": "检测到可回滚内容: 变更 {0}，新增 {1}，删除 {2}",
@@ -98,6 +103,7 @@
   "rollback.cleanup-skipped": "已跳过清理备份文件。",
   "rollback.recreate-dir": "[重建目录] {0}",
   "rollback.no-patch-dir": "当前目录下未找到 Patch 文件夹: {0}\n请把 Patch 文件夹复制到旧版本根目录后，再运行 rollback_patch。",
+  "rollback.journal-removed": "已清理未完成的补丁应用日志。",
 
   "backup.created": "已备份到: {0}",
   "backup.skipped": "跳过: {0}",
@@ -131,6 +137,7 @@
 
   "hdiff.oom-fallback": "注意: 内存不足（{0} GB 文件），自动切换到流式模式",
   "hdiff.oom-fallback-generic": "注意: 内存不足，自动切换到流式模式",
+  "hdiff.size-fallback": "注意: 输入文件较大（{0} GB），直接使用流式模式",
   "hdiff.mt-fallback": "注意: 多线程应用补丁失败，回退单线程重试 ({0})",
   "hdiff.stream-fallback": "注意: 内存不足，自动切换为流式模式",
 

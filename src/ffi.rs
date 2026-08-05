@@ -1,6 +1,7 @@
 use crate::t;
-use std::ffi::c_void;
+use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
+use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::Mutex;
 
@@ -84,6 +85,27 @@ fn error_msg(code: i32) -> String {
     }
 }
 
+/// 将路径转换为 C 字符串传给 C 库。
+/// Unix 上按原始字节转换，保留非 UTF-8 文件名；
+/// 其他平台（Windows）的窄字符 API 只能尽力而为，沿用 lossy 转换。
+fn path_to_cstring(path: &Path) -> Result<CString, PatchError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        CString::new(path.as_os_str().as_bytes()).map_err(|e| PatchError {
+            code: -1,
+            message: t!("ffi.invalid-path", e),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        CString::new(path.to_string_lossy().as_bytes()).map_err(|e| PatchError {
+            code: -1,
+            message: t!("ffi.invalid-path", e),
+        })
+    }
+}
+
 pub fn create_patch(
     old_data: &[u8],
     new_data: &[u8],
@@ -150,9 +172,9 @@ pub fn create_patch(
 }
 
 pub fn create_patch_file(
-    old_file: &str,
-    new_file: &str,
-    patch_file: &str,
+    old_file: &Path,
+    new_file: &Path,
+    patch_file: &Path,
     thread_num: u32,
     use_compression: bool,
     fast_format: bool,
@@ -162,18 +184,9 @@ pub fn create_patch_file(
         message: "FFI mutex poisoned".to_string(),
     })?;
 
-    let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
-        code: -1,
-        message: t!("ffi.invalid-path", e),
-    })?;
-    let new_c = std::ffi::CString::new(new_file).map_err(|e| PatchError {
-        code: -1,
-        message: t!("ffi.invalid-path", e),
-    })?;
-    let patch_c = std::ffi::CString::new(patch_file).map_err(|e| PatchError {
-        code: -1,
-        message: t!("ffi.invalid-path", e),
-    })?;
+    let old_c = path_to_cstring(old_file)?;
+    let new_c = path_to_cstring(new_file)?;
+    let patch_c = path_to_cstring(patch_file)?;
 
     let thread_num_i32 = i32::try_from(thread_num).unwrap_or(i32::MAX);
     let ret = unsafe {
@@ -259,9 +272,9 @@ pub fn apply_patch(
 }
 
 pub fn apply_patch_file(
-    old_file: &str,
+    old_file: &Path,
     patch_data: &[u8],
-    output_file: &str,
+    output_file: &Path,
     thread_num: u32,
 ) -> Result<(), PatchError> {
     let _lock = FFI_LOCK.lock().map_err(|_| PatchError {
@@ -269,14 +282,8 @@ pub fn apply_patch_file(
         message: "FFI mutex poisoned".to_string(),
     })?;
 
-    let old_c = std::ffi::CString::new(old_file).map_err(|e| PatchError {
-        code: -1,
-        message: t!("ffi.invalid-path", e),
-    })?;
-    let output_c = std::ffi::CString::new(output_file).map_err(|e| PatchError {
-        code: -1,
-        message: t!("ffi.invalid-path", e),
-    })?;
+    let old_c = path_to_cstring(old_file)?;
+    let output_c = path_to_cstring(output_file)?;
 
     let thread_num_i32 = i32::try_from(thread_num).unwrap_or(i32::MAX);
     let ret = unsafe {
