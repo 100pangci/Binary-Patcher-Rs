@@ -157,3 +157,17 @@ Exhibit B - “Incompatible With Secondary Licenses” Notice
 
     This Source Code Form is “Incompatible With Secondary Licenses”, as defined by the Mozilla Public License, v. 2.0.
 
+
+----------------------------------------------------------------------------------
+
+This project includes third-party software:
+
+HDiffPatch
+MIT License
+Copyright (c) 2012-2025 housisong
+Full license text: https://github.com/sisong/HDiffPatch/blob/master/LICENSE
+
+zlib (built for inflate only)
+zlib License
+Copyright (c) 1995-2024 Jean-loup Gailly and Mark Adler
+Full license text: https://github.com/madler/zlib/blob/develop/LICENSE
