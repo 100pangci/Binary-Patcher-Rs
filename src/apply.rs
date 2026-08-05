@@ -191,6 +191,8 @@ pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Resul
 }
 
 fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
+    use std::io::Write;
+
     let journal_path = patch_dir.join(JOURNAL_FILE_NAME);
     if !journal_path.exists() {
         return Ok(());
@@ -216,7 +218,6 @@ fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result
     };
 
     eprintln!("{}", t!("apply.journal-found"));
-    use std::io::Write;
     loop {
         print!("{}", t!("apply.journal-prompt"));
         std::io::stdout().flush()?;
