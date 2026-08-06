@@ -132,11 +132,14 @@ int hdiffpatch_create_file(
         size_t capped_threads = (size_t)thread_num;
         if (capped_threads < 1) capped_threads = 1;
 
+        // 文件流非 MT 安全：必须声明 newDataIsMTSafe/oldDataIsMTSafe = false，
+        // 让库内部包一层 TMTSafeStreamInput（加锁），否则多线程并发读同一
+        // FILE* 会产生数据竞争，偶发生成损坏补丁（与官方 hdiffz 的 false/false 一致）。
         const hdiff_TMTSets_s mtsets = {
             capped_threads,
             capped_threads,
-            hpatch_TRUE,
-            hpatch_TRUE
+            hpatch_FALSE,
+            hpatch_FALSE
         };
 
         hpatch_StreamPos_t oldSize = oldStream.base.streamSize;
