@@ -23,10 +23,12 @@
   - OOM 流式回退前释放已读入的文件数据（此前残留内存会导致流式再次 OOM，且 HDiffPatch 内部线程池异常展开时直接 terminate）
   - apply 接口改为两段式（解析补丁头 → Rust 分配输出缓冲 → C 库填充），消除 C 分配 + Rust 复制造成的双缓冲峰值内存
   - apply 侧新增大小阈值决策：old + new 超过 1 GiB 直接流式，避免 Rust 分配输出缓冲时 OOM（Rust 分配失败不可捕获，直接 abort）
-  - **流式模式强制 fast 格式**：precise 流式算法（TDigestMatcher + serialize）在内存不足时会在 C 层静默截断输出，生成损坏补丁且不报错；fast 格式（window matcher）内存可控且可靠，precise 仅内存路径可用
-- **移除补丁压缩（zlib deflate）**：实测 zlib 对随机二进制差异（真实补丁场景）几乎无收益（64M 随机差异数据 0% 压缩率）；且压缩序列化是内存不足时静默生成损坏补丁的根源路径（`ulimit -v` 实测 3 次中 2 次截断损坏，exit 0 无报错）。`--no-compress` 参数移除；build.rs 的 zlib 仅保留 inflate 部分（兼容旧版压缩补丁的 apply 侧解压），create 侧不再压缩
+  - **流式模式强制 fast 格式**：fast（window matcher）流式内存可控且实测可靠，precise 仅内存路径可用
+- **移除补丁压缩（zlib deflate）**：实测 zlib 对随机二进制差异（真实补丁场景）几乎无收益（64M 随机差异数据 0% 压缩率）。`--no-compress` 参数移除；build.rs 的 zlib 仅保留 inflate 部分（兼容旧版压缩补丁的 apply 侧解压），create 侧不再压缩
 
-> **上游问题（待 HDiffPatch 修复）**：本次实测复现的两个缺陷均在 `libHDiffPatch/` 库内部——(1) 压缩序列化路径的 C 层 `malloc` 失败未检查，内存不足时静默截断补丁输出且返回成功（嵌入场景稳定复现，官方 hdiffz 的自检能兜底，但库调用方拿不到任何错误）；(2) TMT 多线程 diff 在内存临界时线程创建失败，`std::vector<std::thread>` 异常展开时 joinable 线程析构触发 `std::terminate`（官方 hdiffz 自编二进制实测偶发，rc=134）。本项目上述两条（强制 fast、移除 zlib 压缩）均为**规避措施**，上游修复后可考虑解除。复现脚本 `scripts/reproduce-hdiffpatch-oom.sh` 已随仓库提交，issue 草稿仅本地留存（`docs/hdiffpatch-oom-issue.md`，未入库），待上游确认后关闭。
+> **上游问题（待 HDiffPatch 修复）**：TMT 多线程 diff 在内存临界时线程创建失败，`std::vector<std::thread>` 异常展开时 joinable 线程析构触发 `std::terminate`（官方 hdiffz 自编二进制实测偶发，rc=134；作者在 Linux/Windows 均复现）。复现脚本 `scripts/reproduce-hdiffpatch-oom.sh` 已随仓库提交，issue 草稿仅本地留存（`docs/hdiffpatch-oom-issue.md`，未入库），待上游确认后关闭。
+>
+> **勘误**：早前实测的"流式生成损坏/截断补丁（exit 0 无报错）"经排查为**本项目 wrapper 的 bug**——`hdiff_TMTSets_s` 的 `newDataIsMTSafe`/`oldDataIsMTSafe` 误传 `true`（实际传入非 MT 安全的文件流），TMT 多线程并发读同一 FILE* 产生数据竞争，偶发损坏补丁；与官方 hdiffz 的 `false/false` 对齐后 30 次运行零损坏（见 f4418cb）。上游 issue #455 症状 1 相应撤回。
 
 ### Fixed
 - bundle 模式补丁信息中 `{0}` 占位符未替换，`print_patch_result` 和 `process_changed_auto` 未传递参数导致占位符字面输出
