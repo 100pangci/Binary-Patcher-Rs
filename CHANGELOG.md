@@ -1,6 +1,6 @@
 # Changelog
 
-## [dev] — 
+## [v1.3.0] — 2026-08-17
 
 ### Added
 - `[lints]` 配置：crate 级声明 rustc/clippy 检查（含 pedantic 选择性启用），不再依赖 CI 参数
