@@ -112,6 +112,10 @@ mkdir -p "$old/data/scripts/ai" "$new/data/scripts/ai"
 printf 'v1.0 behavior tree' > "$old/data/scripts/ai/enemy.lua"
 printf 'v2.0 behavior tree with patrol routes and flee logic' > "$new/data/scripts/ai/enemy.lua"
 
+# --- 非 ASCII 文件名（中文路径）---
+printf '旧版角色数据' > "$old/角色-旧.txt"
+printf '新版角色数据 v2' > "$new/角色-旧.txt"
+
 # --- 新增文件 ---
 printf '[NEW] fresh file content' > "$new/newly_added.txt"
 head -c 2048 /dev/urandom > "$new/new_plugin.dll"

@@ -91,7 +91,9 @@ fn error_msg(code: i32) -> String {
 
 /// 将路径转换为 C 字符串传给 C 库。
 /// Unix 上按原始字节转换，保留非 UTF-8 文件名；
-/// 其他平台（Windows）的窄字符 API 只能尽力而为，沿用 lossy 转换。
+/// Windows 上转换为 UTF-8，C 侧以 _IS_USED_WIN32_UTF8_WAPI 宽字符 API
+/// （UTF-8→UTF-16 + _wfsopen）打开文件，绕开 ANSI 代码页（GBK）限制。
+/// 仅 Windows 文件名的未配对代理项会替换为 U+FFFD（现实中几乎不存在）。
 fn path_to_cstring(path: &Path) -> Result<CString, PatchError> {
     #[cfg(unix)]
     {

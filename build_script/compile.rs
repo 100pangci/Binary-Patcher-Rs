@@ -46,6 +46,18 @@ fn new_build(includes: &[PathBuf], cpp: bool) -> cc::Build {
         build.flag_if_supported("/std:c++11");
         build.define("_CompressPlugin_zlib", None);
     }
+    if cfg!(windows) {
+        // 让 HDiffPatch 的 file_for_patch.c 走宽字符（UTF-8→UTF-16 + _wfsopen）
+        // 文件 I/O，绕开窄字符 fopen 的 ANSI 代码页（中文系统 GBK）问题。
+        // 不改动 HDiffPatch 源码，仅启用其自带的 _IS_USED_WIN32_UTF8_WAPI 宏
+        // （MSVC 默认已启用；MinGW 需显式声明）。
+        build.define("_IS_USED_WIN32_UTF8_WAPI", "1");
+        // _wfsopen 的 _SH_DENYNO 常量在 <share.h> 中（MSVC 幂等，MinGW 必需）
+        if !cpp {
+            build.flag_if_supported("/FIshare.h");
+            build.flag_if_supported("-include share.h");
+        }
+    }
     if !cfg!(windows) {
         build.flag("-pthread");
     }

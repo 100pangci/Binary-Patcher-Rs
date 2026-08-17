@@ -98,6 +98,10 @@ New-Item -ItemType Directory -Path "$new\data\scripts\ai" -Force | Out-Null
 'v1.0 behavior tree' | Out-File "$old\data\scripts\ai\enemy.lua" -Encoding UTF8 -NoNewline
 'v2.0 behavior tree with patrol routes and flee logic' | Out-File "$new\data\scripts\ai\enemy.lua" -Encoding UTF8 -NoNewline
 
+# --- 非 ASCII 文件名（中文路径，验证宽字符文件 I/O）---
+'旧版角色数据' | Out-File "$old\角色-旧.txt" -Encoding UTF8 -NoNewline
+'新版角色数据 v2' | Out-File "$new\角色-旧.txt" -Encoding UTF8 -NoNewline
+
 # --- 新增文件 ---
 '[NEW] fresh file content' | Out-File "$new\newly_added.txt" -Encoding UTF8 -NoNewline
 WriteBin "$new\new_plugin.dll" (RandBytes 2048)

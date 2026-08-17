@@ -1,5 +1,15 @@
 # Changelog
 
+## [dev] — 
+
+### Changed
+- Windows 文件路径改用宽字符 I/O：显式启用 HDiffPatch 自带的 `_IS_USED_WIN32_UTF8_WAPI` 宏
+  （UTF-8→UTF-16 + `_wfsopen`），绕开窄字符 `fopen` 的 ANSI 代码页（中文系统 GBK）问题；
+  MSVC 默认已启用（无行为变化），MinGW 需显式声明（此前的真正缺口）
+  - MinGW 下 `_wfsopen` 的 `_SH_DENYNO` 常量在 `<share.h>` 中，C 构建强制 include（MSVC 幂等）
+  - `src/ffi.rs` 路径注释同步更新：Windows 上以 UTF-8 传入 C 侧，仅未配对代理项 lossy
+- e2e 测试集新增非 ASCII（中文）文件名用例，覆盖 bundle create/stream/apply/rollback 全链路
+
 ## [v1.3.0] — 2026-08-17
 
 ### Added
