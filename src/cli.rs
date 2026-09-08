@@ -13,6 +13,9 @@ pub fn apply_arg_help(cmd: Command) -> Command {
     .mut_arg("lang_dir", |a| {
         a.help(crate::i18n::load_help_text("cli.lang-dir"))
     })
+    .mut_arg("patch_name", |a| {
+        a.help(crate::i18n::load_help_text("cli.patch-name"))
+    })
 }
 
 /// 为 apply_patch 和 rollback_patch 共用参数应用 i18n 帮助文本。
@@ -55,6 +58,13 @@ pub struct Cli {
         help = "自定义语言文件目录（包含 {lang}.json 文件）"
     )]
     pub lang_dir: Option<PathBuf>,
+
+    #[arg(
+        long = "patch-name",
+        global = true,
+        help = "自定义目录补丁名称，例如 v1.4.0（输出为 patch_v1.4.0/）"
+    )]
+    pub patch_name: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,

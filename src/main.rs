@@ -1,5 +1,5 @@
 use binary_patcher::apply;
-use binary_patcher::bundle::{self, init_workspace};
+use binary_patcher::bundle;
 use binary_patcher::cli::{Cli, Commands, PatchFormat};
 use binary_patcher::fmt::{format_size, pause_if_needed};
 use binary_patcher::hdiffpatch;
@@ -53,6 +53,17 @@ fn main() {
     };
     binary_patcher::i18n::init(&lang, lang_dir);
 
+    if cli.patch_name.is_some()
+        && matches!(
+            &cli.command,
+            Some(Commands::Create { .. } | Commands::Apply { .. })
+        )
+    {
+        eprintln!("{}", t!("cli.patch-name-bundle-only"));
+        pause_if_needed();
+        std::process::exit(2);
+    }
+
     let result = match cli.command {
         Some(Commands::Create {
             old_file,
@@ -67,10 +78,11 @@ fn main() {
             patch_file,
             output_file,
         }) => apply::apply_single_patch(&old_file, &patch_file, &output_file),
-        Some(Commands::Bundle { base_dir }) => bundle::build_patch_bundle(
+        Some(Commands::Bundle { base_dir }) => bundle::build_patch_bundle_with_name(
             Path::new(&base_dir),
             cli.patch_mode.clone(),
             cli.patch_format.clone(),
+            cli.patch_name.as_deref(),
         ),
         None => {
             let base_dir = match std::env::current_dir() {
@@ -80,11 +92,12 @@ fn main() {
                     std::path::PathBuf::from(".")
                 }
             };
-            match init_workspace(&base_dir) {
-                Ok(true) => bundle::build_patch_bundle(
+            match bundle::init_workspace_with_name(&base_dir, cli.patch_name.as_deref()) {
+                Ok(true) => bundle::build_patch_bundle_with_name(
                     &base_dir,
                     cli.patch_mode.clone(),
                     cli.patch_format.clone(),
+                    cli.patch_name.as_deref(),
                 ),
                 Ok(false) => {
                     pause_if_needed();

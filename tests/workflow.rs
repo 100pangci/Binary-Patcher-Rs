@@ -1,6 +1,8 @@
 mod common;
 
 use common::{all_file_relpaths, build_workspace, copy_tree_files};
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 // ===========================================================================
 // Full integration: bundle -> apply -> rollback
@@ -53,6 +55,12 @@ fn test_full_workflow() {
             .exists(),
         "journal should be removed after a successful apply"
     );
+    assert!(
+        game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "successful apply should write an applied-patch marker"
+    );
 
     // Verify applied state matches New/
     let new_files = all_file_relpaths(&base_dir.join("New"));
@@ -88,6 +96,12 @@ fn test_full_workflow() {
             .join(binary_patcher::apply::JOURNAL_FILE_NAME)
             .exists(),
         "journal should be removed after rollback"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "rollback should remove the applied-patch marker"
     );
 
     // Verify rolled back state matches Old/
@@ -514,4 +528,90 @@ fn test_journal_malformed_json_errors() {
     let result = binary_patcher::apply::rollback_from_journal(base, &patch_dir);
     assert!(result.is_err());
     assert!(journal_path.exists());
+}
+
+#[test]
+fn test_named_patch_cli_selection_marker_and_rollback() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path();
+    build_workspace(base_dir);
+
+    let base_arg = base_dir.to_str().unwrap();
+    for patch_name in ["v1.4.0", "security_hotfix"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_binary_patcher"))
+            .args([
+                "--lang",
+                "en",
+                "--patch-name",
+                patch_name,
+                "bundle",
+                "--base-dir",
+                base_arg,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "bundle failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let game_dir = base_dir.join("named-game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    for patch_name in ["v1.4.0", "security_hotfix"] {
+        copy_tree_files(
+            &base_dir.join(format!("patch_{patch_name}")),
+            &game_dir.join(format!("patch_{patch_name}")),
+        );
+    }
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_apply_patch"))
+        .args(["--base-dir", game_dir.to_str().unwrap(), "--lang", "en"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Candidates are sorted by id: security_hotfix is 1, v1.4.0 is 2.
+    child.stdin.take().unwrap().write_all(b"2\n").unwrap();
+    let apply_output = child.wait_with_output().unwrap();
+    assert!(
+        apply_output.status.success(),
+        "apply failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&apply_output.stdout),
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+    let apply_stdout = String::from_utf8_lossy(&apply_output.stdout);
+    assert!(apply_stdout.contains("Which patch should be applied?"));
+    assert!(apply_stdout.contains("Apply identifier:"));
+    assert!(game_dir.join("patch_v1.4.0/.applied_patch.json").is_file());
+    assert!(
+        !game_dir
+            .join("patch_security_hotfix/.applied_patch.json")
+            .exists()
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        std::fs::read_to_string(base_dir.join("New/config.ini")).unwrap()
+    );
+
+    let rollback_output = Command::new(env!("CARGO_BIN_EXE_rollback_patch"))
+        .args(["--base-dir", game_dir.to_str().unwrap(), "--lang", "en"])
+        .output()
+        .unwrap();
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&rollback_output.stdout),
+        String::from_utf8_lossy(&rollback_output.stderr)
+    );
+    let rollback_stdout = String::from_utf8_lossy(&rollback_output.stdout);
+    assert!(rollback_stdout.contains("latest apply identifier"));
+    assert!(!game_dir.join("patch_v1.4.0/.applied_patch.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        std::fs::read_to_string(base_dir.join("Old/config.ini")).unwrap()
+    );
 }

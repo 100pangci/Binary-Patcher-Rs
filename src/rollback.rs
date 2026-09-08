@@ -7,14 +7,17 @@ use std::io::Write;
 use std::path::Path;
 
 pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
-    let patch_dir = base_dir.join("Patch");
+    rollback_bundle_at(base_dir, &base_dir.join("Patch"))
+}
 
+pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
     if !patch_dir.exists() {
         anyhow::bail!("{}", t!("rollback.no-patch-dir", patch_dir.display()));
     }
+    crate::patch::validate_patch_dir(base_dir, patch_dir)?;
 
-    let manifest = Manifest::load(&patch_dir)?;
-    let backup_root = backup_root_dir(&patch_dir);
+    let manifest = Manifest::load(patch_dir)?;
+    let backup_root = backup_root_dir(patch_dir);
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -122,7 +125,7 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
             true
         };
         if should_clean {
-            if !backup_root.starts_with(&patch_dir) {
+            if !backup_root.starts_with(patch_dir) {
                 anyhow::bail!("{}", t!("rollback.path-unsafe", backup_root.display()));
             }
             std::fs::remove_dir_all(&backup_root)?;
@@ -142,6 +145,8 @@ pub fn rollback_bundle(base_dir: &Path) -> anyhow::Result<()> {
         std::fs::remove_file(&journal_path)?;
         println!("{}", t!("rollback.journal-removed"));
     }
+
+    crate::patch::remove_applied_marker(patch_dir)?;
 
     Ok(())
 }

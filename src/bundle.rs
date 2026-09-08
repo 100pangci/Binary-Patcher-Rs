@@ -5,6 +5,7 @@ use crate::fs::relative_maps;
 use crate::hash::sha256_of_file;
 use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{AddedEntry, ChangedEntry, DeletedEntry, INSTRUCTIONS_NAME, Manifest};
+use crate::patch::patch_dir_for_name;
 use crate::path::ensure_parent_dir;
 use crate::t;
 use anyhow::Context;
@@ -16,9 +17,19 @@ pub fn build_patch_bundle(
     mode: PatchMode,
     format: PatchFormat,
 ) -> anyhow::Result<()> {
+    build_patch_bundle_with_name(base_dir, mode, format, None)
+}
+
+#[allow(clippy::needless_pass_by_value)]
+pub fn build_patch_bundle_with_name(
+    base_dir: &Path,
+    mode: PatchMode,
+    format: PatchFormat,
+    patch_name: Option<&str>,
+) -> anyhow::Result<()> {
     let old_dir = base_dir.join("Old");
     let new_dir = base_dir.join("New");
-    let patch_dir = base_dir.join("Patch");
+    let patch_dir = patch_dir_for_name(base_dir, patch_name)?;
 
     if patch_dir.exists() {
         eprintln!("{}", t!("bundle.will-clear-patch", patch_dir.display()));
@@ -181,26 +192,41 @@ fn print_patch_result(
 }
 
 fn write_patch_instructions(patch_dir: &Path) -> anyhow::Result<()> {
+    let patch_dir_name = patch_dir.file_name().map_or_else(
+        || "Patch".to_string(),
+        |name| name.to_string_lossy().to_string(),
+    );
     let lines = [
-        "This is an auto-generated patch bundle by binary_patcher.",
-        "",
-        "Usage:",
-        "1. Copy the entire Patch folder to the old version root directory.",
-        "2. Place apply_patch in the old version root directory and run it.",
-        "3. The program will apply patches according to manifest.json.",
+        "This is an auto-generated patch bundle by binary_patcher.".to_string(),
+        String::new(),
+        "Usage:".to_string(),
+        format!("1. Copy the entire {patch_dir_name} folder to the old version root directory."),
+        "2. Place apply_patch in the old version root directory and run it.".to_string(),
+        "3. The program will apply patches according to manifest.json.".to_string(),
     ];
     std::fs::write(patch_dir.join(INSTRUCTIONS_NAME), lines.join("\n"))?;
     Ok(())
 }
 
 pub fn init_workspace(base_dir: &Path) -> anyhow::Result<bool> {
+    init_workspace_with_name(base_dir, None)
+}
+
+pub fn init_workspace_with_name(base_dir: &Path, patch_name: Option<&str>) -> anyhow::Result<bool> {
+    let patch_dir = patch_dir_for_name(base_dir, patch_name)?;
     let mut created = Vec::new();
 
-    for folder_name in &["Old", "New", "Patch"] {
-        let folder_path = base_dir.join(folder_name);
+    for folder_path in [
+        base_dir.join("Old"),
+        base_dir.join("New"),
+        patch_dir.clone(),
+    ] {
         if !folder_path.exists() {
             std::fs::create_dir_all(&folder_path)?;
-            created.push(*folder_name);
+            created.push(folder_path.file_name().map_or_else(
+                || folder_path.display().to_string(),
+                |name| name.to_string_lossy().to_string(),
+            ));
         }
     }
 
@@ -218,7 +244,11 @@ pub fn init_workspace(base_dir: &Path) -> anyhow::Result<bool> {
         println!("\n{}", t!("bundle.workspace-instructions"));
         println!("{}", t!("bundle.workspace-old"));
         println!("{}", t!("bundle.workspace-new"));
-        println!("{}", t!("bundle.workspace-output"));
+        let output_name = patch_dir.file_name().map_or_else(
+            || patch_dir.display().to_string(),
+            |name| name.to_string_lossy().to_string(),
+        );
+        println!("{}", t!("bundle.workspace-output", output_name));
         println!("\n{}", t!("bundle.workspace-ready"));
         return Ok(false);
     }

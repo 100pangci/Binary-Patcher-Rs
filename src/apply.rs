@@ -245,32 +245,40 @@ fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result
 }
 
 pub fn apply_bundle(base_dir: &Path) -> anyhow::Result<()> {
-    let patch_dir = base_dir.join("Patch");
+    apply_bundle_at(base_dir, &base_dir.join("Patch"))
+}
 
+pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
     if !patch_dir.exists() {
         anyhow::bail!("{}", t!("apply.no-patch-dir", patch_dir.display()));
     }
+    crate::patch::validate_patch_dir(base_dir, patch_dir)?;
 
-    let manifest = Manifest::load(&patch_dir)?;
-    let backup_root = backup_root_dir(&patch_dir);
+    let manifest = Manifest::load(patch_dir)?;
+    let backup_root = backup_root_dir(patch_dir);
     let journal_path = patch_dir.join(JOURNAL_FILE_NAME);
     let mut journal = ChangeJournal::new(base_dir, &backup_root, &journal_path);
 
-    handle_interrupted_apply(base_dir, &patch_dir)?;
+    handle_interrupted_apply(base_dir, patch_dir)?;
     check_version_compat_or_prompt(&manifest)?;
     print_apply_summary(&manifest);
 
-    let result = (|| -> anyhow::Result<()> {
-        apply_changed_files(base_dir, &patch_dir, &manifest, &mut journal)?;
-        apply_added_files(base_dir, &patch_dir, &manifest, &mut journal)?;
+    let result = (|| -> anyhow::Result<crate::patch::AppliedPatchMarker> {
+        apply_changed_files(base_dir, patch_dir, &manifest, &mut journal)?;
+        apply_added_files(base_dir, patch_dir, &manifest, &mut journal)?;
         apply_deleted_files(base_dir, &manifest, &mut journal)?;
         remove_deleted_dirs(base_dir, &manifest, &mut journal)?;
-        Ok(())
+        let marker = crate::patch::write_applied_marker(base_dir, patch_dir)?;
+        Ok(marker)
     })();
 
     match result {
-        Ok(()) => {
+        Ok(marker) => {
             let _ = std::fs::remove_file(&journal_path);
+            println!(
+                "{}",
+                t!("apply.marker-created", marker.apply_id, marker.patch_dir)
+            );
             println!("{}", t!("apply.complete"));
             println!("{}", t!("apply.rollback-hint"));
             Ok(())

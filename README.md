@@ -11,8 +11,10 @@
 
 - **单文件补丁** — 对两个文件生成/应用补丁
 - **整目录打包** — 对比 `Old/` 与 `New/`，自动生成 `manifest.json` + 补丁文件 + 新增文件
+- **命名补丁包** — 使用 `--patch-name` 生成 `patch_<名称>/`，可在同一目录保存多个版本补丁
+- **补丁选择** — `apply_patch` 检测多个命名补丁后引导选择，避免误应用错误版本
 - **一键应用** — `apply_patch` 读取清单、校验 SHA256、备份原文件、执行补丁
-- **一键回滚** — `rollback_patch` 恢复备份、删除新增文件
+- **可追踪回滚** — 应用成功后写入应用标识，`rollback_patch` 自动定位最近一次应用的补丁；回滚完成后删除标识
 - **自适应内存/流式** — `--mode auto` 优先内存模式，OOM 时按文件自动回退流式
 - **低内存流式** — `--mode stream` 强制流式模式，降低内存占用，适合大文件或内存受限环境
 - **安全保障**：
@@ -83,16 +85,48 @@ binary_patcher
 - `Patch/**/*.new` — 新增文件的副本
 - `Patch/README.txt` — 使用说明
 
+如需在同一个工作目录生成多个可选补丁，可以为补丁指定名称：
+
+```sh
+binary_patcher --patch-name v1.4.0
+# 或者使用显式的 bundle 子命令
+binary_patcher bundle --base-dir . --patch-name v1.4.0
+```
+
+以上命令会生成 `patch_v1.4.0/`。传入 `patch_v1.4.0` 也会得到同样的目录名；名称只能作为当前目录的单级目录名使用。
+
 ### 2. 应用整包补丁
 
 ```
 旧版本根目录/
 ├── apply_patch
-├── Patch/
+├── Patch/                         ← 没有命名补丁时使用
 │   ├── manifest.json
 │   ├── ... .patch
 │   └── ... .new
 ```
+
+如果目录中同时存在多个命名补丁，例如：
+
+```text
+旧版本根目录/
+├── apply_patch
+├── patch_v1.4.0/
+│   └── manifest.json
+└── patch_security_hotfix/
+    └── manifest.json
+```
+
+运行 `apply_patch` 时会显示：
+
+```text
+要应用哪个补丁？
+1 - security_hotfix
+2 - v1.4.0
+0 - 退出
+```
+
+这里只会列出名称以 `patch_` 开头、且直接包含 `manifest.json` 的目录。输入 `0` 不会修改目标目录并立即退出。没有命名补丁时，程序继续使用传统的 `Patch/` 目录。
 
 ```sh
 ./apply_patch
@@ -105,6 +139,8 @@ binary_patcher
 3. 通过 HDiffPatch 引擎应用补丁
 4. 验证输出是否匹配 `new_sha256`
 5. 复制新增文件，删除已移除的文件
+
+应用成功后，程序会在实际使用的补丁目录中生成隐藏文件 `.applied_patch.json`。其中包含本次应用的唯一标识符和补丁目录名；`rollback_patch` 会优先读取最近一次有效标识，自动回滚对应补丁，不需要再次猜测。回滚成功后，该标识文件会被删除；如果没有可用标识，`rollback_patch` 会使用与 `apply_patch` 相同的补丁选择菜单。
 
 ### 3. 回滚补丁
 
@@ -124,6 +160,7 @@ binary_patcher
 | `create <旧文件> <新文件> <补丁文件>` | 对两个文件创建单个补丁 |
 | `apply <旧文件> <补丁文件> <输出文件>` | 应用单个补丁 |
 | `bundle --base-dir <路径>` | 指定工作目录执行打包 |
+| `--patch-name <名称>` | 自定义目录补丁名称，例如 `v1.4.0`，输出为 `patch_v1.4.0/`；可用于无子命令模式或 `bundle` |
 | `--mode auto/stream/memory` | 补丁创建模式：`auto` 自动选择（默认）、`stream` 流式低内存、`memory` 全加载最优 |
 | `--format precise/fast` | 差分算法：`precise` suffix-string（补丁更小，默认）、`fast` hash（速度更快） |
 
@@ -131,13 +168,13 @@ binary_patcher
 
 | 参数 | 说明 |
 |------|------|
-| `--base-dir <路径>` | 旧版本根目录，默认为当前目录（需包含 `Patch/`） |
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `patch_<名称>/` |
 
 ### `rollback_patch`
 
 | 参数 | 说明 |
 |------|------|
-| `--base-dir <路径>` | 旧版本根目录，默认为当前目录（需包含 `Patch/`） |
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `patch_<名称>/` |
 
 ## 项目结构
 
@@ -178,6 +215,7 @@ binary_patcher
 │   ├── hdiffpatch.rs        # 补丁创建/应用调用封装
 │   ├── manifest.rs          # Manifest 类型、JSON 序列化、校验
 │   ├── path.rs              # 安全路径解析与穿越防护
+│   ├── patch.rs             # 命名补丁发现、交互选择和应用标识
 │   ├── bundle.rs            # 整目录打包（Old/New → Patch）
 │   ├── apply.rs             # 补丁应用逻辑
 │   └── rollback.rs          # 补丁回滚逻辑
@@ -188,8 +226,9 @@ binary_patcher
     ├── unit_path.rs        # 安全路径解析单元测试
     ├── unit_fs.rs          # 文件系统遍历与映射单元测试
     ├── unit_manifest.rs    # Manifest 校验/加载单元测试
+    ├── unit_patch.rs       # 命名补丁发现、命名校验和标识测试
     ├── unit_backup.rs      # 备份/恢复单元测试
-    └── workflow.rs         # 端到端集成测试（39 项）
+    └── workflow.rs         # 端到端集成测试（工作流与安全回归）
 ```
 
 ## 安全
@@ -200,6 +239,9 @@ binary_patcher
 | **Manifest 校验** | 加载时验证字段完整性和类型，拒绝格式错误的清单 |
 | **SHA256 校验** | 补丁前后均校验文件完整性，失败自动回滚 |
 | **安全备份** | 备份文件使用 `.backup_before_patch` 后缀，已存在时追加时间戳 |
+| **命名安全** | 自定义名称拒绝路径分隔符、控制字符和 Windows 保留字符，只能生成目标目录下的单级目录 |
+| **补丁目录安全** | 命名补丁必须是目标目录的直接子目录，补丁目录本身不能是符号链接 |
+| **应用标识** | 应用标识使用临时文件 + rename 写入，回滚完成后删除，避免残留错误状态 |
 
 ## 开发
 
@@ -218,6 +260,9 @@ cargo test
 
 # 仅运行端到端集成测试（输出详细日志）
 cargo test --test workflow -- --nocapture
+
+# 仅运行命名补丁相关测试
+cargo test --test unit_patch
 
 # 发布构建
 cargo build --release

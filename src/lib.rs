@@ -9,5 +9,6 @@ pub mod hash;
 pub mod hdiffpatch;
 pub mod i18n;
 pub mod manifest;
+pub mod patch;
 pub mod path;
 pub mod rollback;

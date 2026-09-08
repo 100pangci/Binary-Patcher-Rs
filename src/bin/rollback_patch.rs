@@ -1,5 +1,6 @@
 use binary_patcher::cli;
 use binary_patcher::fmt::pause_if_needed;
+use binary_patcher::patch::{self, PatchAction};
 use binary_patcher::rollback;
 use binary_patcher::t;
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -37,7 +38,17 @@ fn main() {
 
     binary_patcher::i18n::init_from_cli(&cli.lang, cli.lang_dir.as_deref());
 
-    if let Err(e) = rollback::rollback_bundle(&cli.base_dir) {
+    let patch_dir = match patch::select_patch_dir(&cli.base_dir, PatchAction::Rollback) {
+        Ok(Some(path)) => path,
+        Ok(None) => return,
+        Err(e) => {
+            eprintln!("{}", t!("error.generic", e));
+            pause_if_needed();
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = rollback::rollback_bundle_at(&cli.base_dir, &patch_dir) {
         eprintln!("{}", t!("error.generic", e));
         pause_if_needed();
         std::process::exit(1);
