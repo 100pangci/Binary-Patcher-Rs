@@ -1,14 +1,27 @@
 # Changelog
 
-## [dev] — 
+## [v1.3.1] — 2026-09-09
+
+### Added
+- **命名补丁包（多版本共存）**：`--patch-name <名称>` 在目标目录生成 `Patch_<名称>/`（无子命令模式与 `bundle` 均支持，`--patch-name v1.4.0` 输出 `Patch_v1.4.0/`）。同一目录可保存多个版本/语言补丁，实现版本切换
+- `apply_patch` / `rollback_patch` 自动扫描根目录下直接包含 `manifest.json` 的 `Patch_<名称>/`，列出候选项供交互选择（输入 `0` 退出且不改动目标）；无命名补丁时回退传统 `Patch/`
+- 应用标记 `.applied_patch.json`：记录最近一次成功应用的补丁（含 `apply_id` 与序号），`rollback_patch` 自动定位活动补丁定向回滚；`Patch_CHS` / `Patch_CHT` 等命名包之间可反复切换
+- e2e 测试集新增非 ASCII（中文）文件名用例，覆盖 bundle create/stream/apply/rollback 全链路
 
 ### Changed
+- 命名补丁目录前缀统一为大写 `Patch_`（默认目录 `Patch/` 不变），与常见的 `Patch_CHS` / `Patch_CHT` 分发命名一致；传入小写 `patch_v1.4.0` 仍归一为大写生成
+- 构建脚本补充 `rerun-if-changed` 声明，第三方 C/C++ 编译器产物不再混入本 crate 的重新编译触发
+
+### Security
+- 符号链接防护全面收紧（覆盖 apply / rollback / bundle）：补丁目录、`manifest.json`、`.applied_patch.json`、备份根目录及补丁资源文件均拒绝通过符号链接解析到目标目录之外（`manifest` 从符号链接加载、备份目录经符号链接外置等场景全部拦截）
+
+### Fixed
+- macOS / Linux 路径安全校验误拒系统符号链接前缀（如 `/var`、`/tmp`）：路径穿越检查放行位于目标目录祖先链上的系统符号链接
 - Windows 文件路径改用宽字符 I/O：显式启用 HDiffPatch 自带的 `_IS_USED_WIN32_UTF8_WAPI` 宏
   （UTF-8→UTF-16 + `_wfsopen`），绕开窄字符 `fopen` 的 ANSI 代码页（中文系统 GBK）问题；
   MSVC 默认已启用（无行为变化），MinGW 需显式声明（此前的真正缺口）
   - MinGW 下 `_wfsopen` 的 `_SH_DENYNO` 常量在 `<share.h>` 中，C 构建强制 include（MSVC 幂等）
   - `src/ffi.rs` 路径注释同步更新：Windows 上以 UTF-8 传入 C 侧，仅未配对代理项 lossy
-- e2e 测试集新增非 ASCII（中文）文件名用例，覆盖 bundle create/stream/apply/rollback 全链路
 
 ## [v1.3.0] — 2026-08-17
 
