@@ -14,21 +14,37 @@ fn reject_symlink(path: &Path, display_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reject a path if any existing component is a symbolic link.
+/// Reject a path if any component it will create or traverse is a symbolic
+/// link.
 ///
-/// Missing final components are allowed so callers can safely create a new
-/// file or directory after this check.  The check is intentionally performed
-/// before directory creation by `ensure_parent_dir`.
+/// The path is walked upward from itself to the deepest component that
+/// already exists.  If that component is a symbolic link the path is
+/// rejected; components above it belong to the environment the caller chose
+/// (for example macOS maps `/var` and `/tmp` through symlinks) and are
+/// trusted, so symlinks planted by untrusted input below that anchor are the
+/// only ones that matter.  Missing final components are allowed so callers
+/// can safely create a new file or directory after this check.  The check is
+/// intentionally performed before directory creation by `ensure_parent_dir`.
 pub fn ensure_no_symlink_components(path: &Path) -> anyhow::Result<()> {
     let absolute = std::path::absolute(path)?;
     let display_path = path.display().to_string();
-    let mut current = PathBuf::new();
+    let mut current: &Path = absolute.as_path();
 
-    for component in absolute.components() {
-        current.push(component.as_os_str());
-        reject_symlink(&current, &display_path)?;
+    loop {
+        match std::fs::symlink_metadata(current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    anyhow::bail!("{}", t!("path.symlink", display_path));
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match current.parent() {
+                Some(parent) => current = parent,
+                None => return Ok(()),
+            },
+            Err(error) => return Err(error.into()),
+        }
     }
-    Ok(())
 }
 
 pub fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
