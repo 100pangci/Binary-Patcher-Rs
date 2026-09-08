@@ -136,6 +136,7 @@
   "ffi.read-output-failed": "Failed to read output after streaming patch {0}: {1}",
   "path.traversal": "Path traversal detected: {0} resolves outside base directory",
   "path.absolute-component": "Path traversal detected: {0} contains absolute path component",
+  "path.symlink": "Security denied: path contains a symbolic link: {0}",
   "error.generic": "Error: {0}",
   "error.prefix": "Error",
   "hdiff.oom-fallback": "Note: out of memory ({0} GB files), automatically switching to stream mode",

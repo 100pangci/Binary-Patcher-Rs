@@ -162,6 +162,7 @@ pub fn write_applied_marker(
 }
 
 pub fn remove_applied_marker(patch_dir: &Path) -> anyhow::Result<()> {
+    crate::path::ensure_no_symlink_components(patch_dir)?;
     let path = marker_path(patch_dir);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -176,6 +177,7 @@ pub fn remove_applied_marker(patch_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn load_marker(patch_dir: &Path) -> anyhow::Result<Option<AppliedPatchMarker>> {
+    crate::path::ensure_no_symlink_components(patch_dir)?;
     let path = marker_path(patch_dir);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,

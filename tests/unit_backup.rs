@@ -65,3 +65,24 @@ fn test_backup_retry_on_collision() {
     assert!(backup2.exists());
     assert_eq!(std::fs::read_to_string(&backup2).unwrap(), "modified");
 }
+
+#[cfg(unix)]
+#[test]
+fn test_backup_root_symlink_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let backup_root = root.path().join("backups");
+    let target = root.path().join("file.txt");
+    std::fs::write(&target, "original").unwrap();
+    std::os::unix::fs::symlink(outside.path(), &backup_root).unwrap();
+
+    assert!(
+        binary_patcher::backup::write_backup(b"original", &target, root.path(), &backup_root)
+            .is_err()
+    );
+    assert!(
+        binary_patcher::fs::iter_files(outside.path())
+            .next()
+            .is_none()
+    );
+}

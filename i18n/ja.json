@@ -136,6 +136,7 @@
   "ffi.read-output-failed": "ストリーミングパッチ後の読み込みに失敗 {0}: {1}",
   "path.traversal": "パストラバーサル検出: {0} はベースディレクトリ外に解決されます",
   "path.absolute-component": "パストラバーサル検出: {0} に絶対パスコンポーネントが含まれています",
+  "path.symlink": "安全上拒否しました: パスにシンボリックリンクが含まれています: {0}",
   "error.generic": "エラー: {0}",
   "error.prefix": "エラー",
   "hdiff.oom-fallback": "注意: メモリ不足（{0} GB ファイル）、自動的にストリームモードに切り替えます",

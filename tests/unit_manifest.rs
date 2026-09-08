@@ -97,6 +97,25 @@ fn test_resolve_safe_path_rejects_traversal_in_load() {
     assert!(binary_patcher::path::resolve_safe_path(dir.path(), "../outside.txt").is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn test_manifest_symlink_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let patch_dir = root.path().join("Patch");
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    let manifest_path = outside.path().join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string(&Manifest::default()).unwrap(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&manifest_path, patch_dir.join("manifest.json")).unwrap();
+
+    assert!(Manifest::load(&patch_dir).is_err());
+}
+
 // ===========================================================================
 // Malformed JSON manifest
 // ===========================================================================

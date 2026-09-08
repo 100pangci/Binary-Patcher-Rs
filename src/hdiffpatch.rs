@@ -55,6 +55,14 @@ pub fn run_hdiffz_stream(
     thread_count: u32,
     fast_format: bool,
 ) -> Result<u32, ffi::PatchError> {
+    crate::path::ensure_no_symlink_components(old_file).map_err(|e| ffi::PatchError {
+        code: -1,
+        message: e.to_string(),
+    })?;
+    crate::path::ensure_no_symlink_components(new_file).map_err(|e| ffi::PatchError {
+        code: -1,
+        message: e.to_string(),
+    })?;
     crate::path::ensure_parent_dir(patch_file).map_err(|e| ffi::PatchError {
         code: -1,
         message: e.to_string(),
@@ -72,6 +80,8 @@ pub fn run_hdiffz(
 ) -> anyhow::Result<u32> {
     let thread_count = get_diff_thread_count();
 
+    crate::path::ensure_no_symlink_components(old_file)?;
+    crate::path::ensure_no_symlink_components(new_file)?;
     crate::path::ensure_parent_dir(patch_file)?;
 
     let old_size = std::fs::metadata(old_file).map(|m| m.len()).ok();
@@ -140,6 +150,7 @@ pub fn apply_patch_auto(
     output_file: &Path,
     thread_count: u32,
 ) -> Result<Vec<u8>, anyhow::Error> {
+    crate::path::ensure_no_symlink_components(old_file)?;
     crate::path::ensure_parent_dir(output_file)?;
 
     // 先解析补丁头获取输出大小：
@@ -213,6 +224,8 @@ pub fn apply_patch_with_retry(
 
 pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> anyhow::Result<()> {
     let thread_count = get_recommended_thread_count();
+    crate::path::ensure_no_symlink_components(old_file)?;
+    crate::path::ensure_no_symlink_components(patch_file)?;
     let old_data = std::fs::read(old_file)
         .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-old-failed", old_file.display(), e)))?;
     let patch_data = std::fs::read(patch_file)

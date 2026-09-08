@@ -84,6 +84,7 @@ pub fn relative_file_map(base_dir: &Path) -> std::collections::BTreeMap<String, 
 }
 
 pub fn copy_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    crate::path::ensure_no_symlink_components(src)?;
     crate::path::ensure_parent_dir(dst)?;
     std::fs::copy(src, dst)?;
     Ok(())

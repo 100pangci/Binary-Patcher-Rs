@@ -7,6 +7,12 @@ pub fn backup_root_dir(patch_dir: &Path) -> PathBuf {
     patch_dir.join(".backup_before_patch")
 }
 
+pub fn checked_backup_root_dir(patch_dir: &Path) -> anyhow::Result<PathBuf> {
+    let backup_root = backup_root_dir(patch_dir);
+    crate::path::ensure_no_symlink_components(&backup_root)?;
+    Ok(backup_root)
+}
+
 pub fn create_backup(
     target_path: &Path,
     base_dir: &Path,
@@ -32,7 +38,8 @@ pub fn write_backup(
         .and_then(|p| p.strip_prefix(base_dir).ok())
         .unwrap_or(Path::new(""));
 
-    let backup_dir = backup_root.join(rel);
+    crate::path::ensure_no_symlink_components(backup_root)?;
+    let backup_dir = crate::path::resolve_safe_path(backup_root, &rel.to_string_lossy())?;
     crate::path::ensure_parent_dir(&backup_dir.join(file_name))?;
 
     let backup_name = format!("{file_name}{BACKUP_SUFFIX}");
@@ -83,13 +90,20 @@ pub fn restore_backup(
         std::fs::read_dir(dir)
             .ok()?
             .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(&backup_prefix))
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if file_type.is_symlink() || !file_type.is_file() {
+                    return None;
+                }
+                let name = entry.file_name();
+                if !name.to_string_lossy().starts_with(&backup_prefix) {
+                    return None;
+                }
+                let modified = entry.metadata().ok()?.modified().ok()?;
+                Some((entry.path(), modified))
             })
-            .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+            .max_by_key(|(_, modified)| *modified)
+            .map(|(path, _)| path)
     };
 
     let do_restore = |backup_path: &Path| -> anyhow::Result<bool> {
@@ -108,7 +122,8 @@ pub fn restore_backup(
         .parent()
         .and_then(|p| p.strip_prefix(base_dir).ok())
         .unwrap_or(Path::new(""));
-    let backup_dir = backup_root.join(rel);
+    crate::path::ensure_no_symlink_components(backup_root)?;
+    let backup_dir = crate::path::resolve_safe_path(backup_root, &rel.to_string_lossy())?;
     if let Some(path) = find_newest(&backup_dir) {
         return do_restore(&path);
     }

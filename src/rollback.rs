@@ -1,4 +1,4 @@
-use crate::backup::{backup_root_dir, restore_backup};
+use crate::backup::{checked_backup_root_dir, restore_backup};
 use crate::fs::cleanup_empty_dirs;
 use crate::manifest::Manifest;
 use crate::path::{display_path, resolve_safe_path};
@@ -17,7 +17,7 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     crate::patch::validate_patch_dir(base_dir, patch_dir)?;
 
     let manifest = Manifest::load(patch_dir)?;
-    let backup_root = backup_root_dir(patch_dir);
+    let backup_root = checked_backup_root_dir(patch_dir)?;
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -135,12 +135,12 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
         }
     }
 
-    let staging_dir = patch_dir.join(".backup_staging");
+    let staging_dir = resolve_safe_path(patch_dir, ".backup_staging")?;
     if staging_dir.exists() {
         std::fs::remove_dir_all(&staging_dir)?;
     }
 
-    let journal_path = patch_dir.join(crate::apply::JOURNAL_FILE_NAME);
+    let journal_path = resolve_safe_path(patch_dir, crate::apply::JOURNAL_FILE_NAME)?;
     if journal_path.exists() {
         std::fs::remove_file(&journal_path)?;
         println!("{}", t!("rollback.journal-removed"));

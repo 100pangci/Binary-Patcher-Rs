@@ -198,6 +198,131 @@ fn test_apply_failure_auto_rollback() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn test_apply_rejects_symlink_target_without_touching_outside() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base_dir = root.path();
+    build_workspace(base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    let outside_config = outside.path().join("config.ini");
+    std::fs::write(&outside_config, "must remain untouched").unwrap();
+    std::fs::remove_file(game_dir.join("config.ini")).unwrap();
+    std::os::unix::fs::symlink(&outside_config, game_dir.join("config.ini")).unwrap();
+
+    let result = binary_patcher::apply::apply_bundle(&game_dir);
+    assert!(result.is_err(), "apply must reject a symlink target");
+    assert_eq!(
+        std::fs::read_to_string(&outside_config).unwrap(),
+        "must remain untouched"
+    );
+    assert!(
+        std::fs::symlink_metadata(game_dir.join("config.ini"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_rollback_rejects_symlink_target_without_touching_outside() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base_dir = root.path();
+    build_workspace(base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+
+    let outside_config = outside.path().join("config.ini");
+    std::fs::write(&outside_config, "must remain untouched").unwrap();
+    std::fs::remove_file(game_dir.join("config.ini")).unwrap();
+    std::os::unix::fs::symlink(&outside_config, game_dir.join("config.ini")).unwrap();
+
+    let result = binary_patcher::rollback::rollback_bundle(&game_dir);
+    assert!(result.is_err(), "rollback must reject a symlink target");
+    assert_eq!(
+        std::fs::read_to_string(&outside_config).unwrap(),
+        "must remain untouched"
+    );
+    assert!(
+        game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "failed rollback must not clear the applied marker"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_apply_rejects_symlink_patch_resource() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base_dir = root.path();
+    build_workspace(base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    let manifest = binary_patcher::manifest::Manifest::load(&game_patch).unwrap();
+    let patch_rel = manifest.changed[0].patch_file.clone();
+    let patch_path = game_patch.join(&patch_rel);
+    let outside_patch = outside.path().join("payload.patch");
+    std::fs::copy(&patch_path, &outside_patch).unwrap();
+    std::fs::remove_file(&patch_path).unwrap();
+    std::os::unix::fs::symlink(&outside_patch, &patch_path).unwrap();
+
+    let result = binary_patcher::apply::apply_bundle(&game_dir);
+    assert!(
+        result.is_err(),
+        "apply must reject a symlink patch resource"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists()
+    );
+}
+
 // ===========================================================================
 // Patch format: fast vs precise
 // ===========================================================================
@@ -513,6 +638,26 @@ fn test_journal_rejects_path_traversal() {
         journal_path.exists(),
         "journal must be preserved when recovery fails"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_journal_symlink_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    let outside_journal = outside.path().join("journal.json");
+    std::fs::write(&outside_journal, "[]").unwrap();
+    std::os::unix::fs::symlink(&outside_journal, &journal_path).unwrap();
+
+    let result = binary_patcher::apply::rollback_from_journal(base, &patch_dir);
+    assert!(result.is_err());
+    assert!(journal_path.exists());
+    assert_eq!(std::fs::read_to_string(&outside_journal).unwrap(), "[]");
 }
 
 #[test]

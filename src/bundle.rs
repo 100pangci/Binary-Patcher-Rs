@@ -31,6 +31,9 @@ pub fn build_patch_bundle_with_name(
     let new_dir = base_dir.join("New");
     let patch_dir = patch_dir_for_name(base_dir, patch_name)?;
 
+    crate::path::ensure_no_symlink_components(&old_dir)?;
+    crate::path::ensure_no_symlink_components(&new_dir)?;
+    crate::path::ensure_no_symlink_components(&patch_dir)?;
     if patch_dir.exists() {
         eprintln!("{}", t!("bundle.will-clear-patch", patch_dir.display()));
         std::fs::remove_dir_all(&patch_dir)?;
@@ -204,7 +207,9 @@ fn write_patch_instructions(patch_dir: &Path) -> anyhow::Result<()> {
         "2. Place apply_patch in the old version root directory and run it.".to_string(),
         "3. The program will apply patches according to manifest.json.".to_string(),
     ];
-    std::fs::write(patch_dir.join(INSTRUCTIONS_NAME), lines.join("\n"))?;
+    let instructions_path = crate::path::resolve_safe_path(patch_dir, INSTRUCTIONS_NAME)?;
+    crate::path::ensure_parent_dir(&instructions_path)?;
+    std::fs::write(instructions_path, lines.join("\n"))?;
     Ok(())
 }
 
@@ -221,6 +226,7 @@ pub fn init_workspace_with_name(base_dir: &Path, patch_name: Option<&str>) -> an
         base_dir.join("New"),
         patch_dir.clone(),
     ] {
+        crate::path::ensure_no_symlink_components(&folder_path)?;
         if !folder_path.exists() {
             std::fs::create_dir_all(&folder_path)?;
             created.push(folder_path.file_name().map_or_else(

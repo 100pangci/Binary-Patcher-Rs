@@ -212,7 +212,17 @@ impl Manifest {
     }
 
     pub fn load(patch_dir: &Path) -> anyhow::Result<Self> {
-        let manifest_path = patch_dir.join(MANIFEST_NAME);
+        crate::path::ensure_no_symlink_components(patch_dir)?;
+        match std::fs::symlink_metadata(patch_dir) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!("{}", t!("path.symlink", patch_dir.display()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+
+        let manifest_path = crate::path::resolve_safe_path(patch_dir, MANIFEST_NAME)?;
         if !manifest_path.exists() {
             anyhow::bail!("{}", t!("manifest.not-found", manifest_path.display()));
         }
@@ -224,9 +234,10 @@ impl Manifest {
 
     pub fn save(&self, patch_dir: &Path) -> anyhow::Result<()> {
         self.validate()?;
-        crate::path::ensure_parent_dir(&patch_dir.join(MANIFEST_NAME))?;
+        let manifest_path = crate::path::resolve_safe_path(patch_dir, MANIFEST_NAME)?;
+        crate::path::ensure_parent_dir(&manifest_path)?;
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(patch_dir.join(MANIFEST_NAME), content)?;
+        std::fs::write(manifest_path, content)?;
         Ok(())
     }
 }

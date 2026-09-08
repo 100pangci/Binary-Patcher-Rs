@@ -1,4 +1,6 @@
-use crate::backup::{backup_root_dir, create_backup, restore_backup, write_backup};
+use crate::backup::{
+    backup_root_dir, checked_backup_root_dir, create_backup, restore_backup, write_backup,
+};
 use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{apply_patch_auto, run_hpatchz};
@@ -76,6 +78,8 @@ impl ChangeJournal {
             .collect();
 
         let tmp_path = self.journal_path.with_extension("json.tmp");
+        crate::path::ensure_no_symlink_components(&self.journal_path)?;
+        crate::path::ensure_no_symlink_components(&tmp_path)?;
         std::fs::write(&tmp_path, serde_json::to_string(&ser_entries)?)?;
         std::fs::rename(&tmp_path, &self.journal_path)?;
         Ok(())
@@ -176,7 +180,8 @@ fn do_journal_rollback(
 /// 从磁盘上的应用日志回滚一次未完成的 apply（崩溃恢复）。
 /// 供 apply_patch 启动时的中断检测与 rollback_patch 复用。
 pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
-    let journal_path = patch_dir.join(JOURNAL_FILE_NAME);
+    let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
+    crate::path::ensure_no_symlink_components(&journal_path)?;
     if !journal_path.exists() {
         return Ok(());
     }
@@ -184,7 +189,7 @@ pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Resul
     do_journal_rollback(
         entries,
         base_dir,
-        &backup_root_dir(patch_dir),
+        &checked_backup_root_dir(patch_dir)?,
         &journal_path,
     );
     Ok(())
@@ -193,7 +198,8 @@ pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Resul
 fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
     use std::io::Write;
 
-    let journal_path = patch_dir.join(JOURNAL_FILE_NAME);
+    let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
+    crate::path::ensure_no_symlink_components(&journal_path)?;
     if !journal_path.exists() {
         return Ok(());
     }
@@ -255,8 +261,8 @@ pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> 
     crate::patch::validate_patch_dir(base_dir, patch_dir)?;
 
     let manifest = Manifest::load(patch_dir)?;
-    let backup_root = backup_root_dir(patch_dir);
-    let journal_path = patch_dir.join(JOURNAL_FILE_NAME);
+    let backup_root = checked_backup_root_dir(patch_dir)?;
+    let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
     let mut journal = ChangeJournal::new(base_dir, &backup_root, &journal_path);
 
     handle_interrupted_apply(base_dir, patch_dir)?;
