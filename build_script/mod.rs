@@ -28,6 +28,9 @@ pub fn main() {
     let zlib_dir = download::download_zlib(zlib_version, &cache_dir);
 
     let mut zlib_build = cc::Build::new();
+    // zlib is also third-party source and should not add upstream warnings to
+    // the application's build output.
+    zlib_build.warnings(false);
     zlib_build.define("NDEBUG", None);
     zlib_build.opt_level(3);
     zlib_build.include(&zlib_dir);

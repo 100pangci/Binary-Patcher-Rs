@@ -32,6 +32,11 @@ fn includes_for(
 fn new_build(includes: &[PathBuf], cpp: bool) -> cc::Build {
     let mut build = cc::Build::new();
     build
+        // HDiffPatch is third-party C/C++ code.  Do not apply cc-rs's generic
+        // -Wall/-Wextra set to it: the upstream release contains many
+        // intentional compatibility constructs that are not actionable here.
+        // Rust and this build script keep their normal warning checks.
+        .warnings(false)
         .define("NDEBUG", None)
         .define("_IS_RUN_MEM_SAFE_CHECK", "0")
         .define("_IS_OUT_DIFF_INFO", "0")

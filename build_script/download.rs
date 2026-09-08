@@ -48,7 +48,7 @@ pub fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
     if zlib_dir.exists() {
         return zlib_dir;
     }
-    println!("cargo:warning=Downloading zlib {version}...");
+    println!("Downloading zlib {version}...");
     let url = format!("https://github.com/madler/zlib/archive/refs/tags/v{version}.zip");
     let client = reqwest::blocking::Client::builder()
         .user_agent("BinaryPatcher-BuildScript/2.0")
@@ -61,10 +61,7 @@ pub fn download_zlib(version: &str, cache_dir: &Path) -> PathBuf {
     let mut archive = zip::ZipArchive::new(cursor).expect("Failed to read zlib zip archive");
     let root_prefix = format!("{dir_name}/");
     extract_zip_entries(&mut archive, &root_prefix, &zlib_dir);
-    println!(
-        "cargo:warning=zlib {version} extracted to {}",
-        zlib_dir.display()
-    );
+    println!("zlib {version} extracted to {}", zlib_dir.display());
 
     let zlib_h = zlib_dir.join("zlib.h");
     let content = std::fs::read_to_string(&zlib_h)
@@ -82,7 +79,6 @@ fn get_latest_tag(cache_dir: &Path) -> String {
     if let Ok(v) = std::fs::read_to_string(&version_file) {
         let v = v.trim();
         if !v.is_empty() {
-            println!("cargo:warning=Using cached HDiffPatch version: {v}");
             return v.to_string();
         }
     }
@@ -100,7 +96,6 @@ fn get_latest_tag(cache_dir: &Path) -> String {
         .build()
         .expect("Failed to create HTTP client");
 
-    println!("cargo:warning=Fetching latest HDiffPatch release from GitHub API...");
     let mut tag_name: Option<String> = None;
 
     if let Ok(resp) = client.get(super::HDIFFPATCH_REPO_API).send()
@@ -109,22 +104,20 @@ fn get_latest_tag(cache_dir: &Path) -> String {
         tag_name = release["tag_name"].as_str().map(str::to_string);
     }
 
-    if tag_name.is_none() {
-        println!("cargo:warning=API failed, falling back to scraping releases page...");
-        if let Ok(resp) = client
+    if tag_name.is_none()
+        && let Ok(resp) = client
             .get("https://github.com/sisong/HDiffPatch/releases/latest")
             .send()
-            && let Ok(html) = resp.text()
-        {
-            for line in html.lines() {
-                if let Some(start) = line.find("/sisong/HDiffPatch/releases/tag/v") {
-                    let rest = &line[start..];
-                    if let Some(end) = rest.find('"') {
-                        let tag = rest[..end].rsplit('/').next().unwrap_or("");
-                        if !tag.is_empty() {
-                            tag_name = Some(tag.to_string());
-                            break;
-                        }
+        && let Ok(html) = resp.text()
+    {
+        for line in html.lines() {
+            if let Some(start) = line.find("/sisong/HDiffPatch/releases/tag/v") {
+                let rest = &line[start..];
+                if let Some(end) = rest.find('"') {
+                    let tag = rest[..end].rsplit('/').next().unwrap_or("");
+                    if !tag.is_empty() {
+                        tag_name = Some(tag.to_string());
+                        break;
                     }
                 }
             }
@@ -138,7 +131,6 @@ fn get_latest_tag(cache_dir: &Path) -> String {
         )
     });
 
-    println!("cargo:warning=Latest HDiffPatch release: {tag_name}");
     std::fs::create_dir_all(cache_dir).unwrap_or_else(|e| {
         panic!(
             "Failed to create cache directory {}: {e}",
@@ -168,7 +160,7 @@ pub fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
     let download_url =
         format!("https://github.com/sisong/HDiffPatch/archive/refs/tags/{tag_name}.zip");
 
-    println!("cargo:warning=Downloading HDiffPatch {tag_name}...");
+    println!("Downloading HDiffPatch {tag_name}...");
 
     let response = client
         .get(&download_url)
@@ -212,7 +204,7 @@ pub fn download_and_extract(zip_path: &PathBuf, expected_dir: &PathBuf) {
     );
 
     println!(
-        "cargo:warning=HDiffPatch {tag_name} extracted to {}",
+        "HDiffPatch {tag_name} extracted to {}",
         expected_dir.display()
     );
 }
