@@ -707,8 +707,8 @@ fn test_named_patch_cli_selection_marker_and_rollback() {
     copy_tree_files(&base_dir.join("Old"), &game_dir);
     for patch_name in ["v1.4.0", "security_hotfix"] {
         copy_tree_files(
-            &base_dir.join(format!("patch_{patch_name}")),
-            &game_dir.join(format!("patch_{patch_name}")),
+            &base_dir.join(format!("Patch_{patch_name}")),
+            &game_dir.join(format!("Patch_{patch_name}")),
         );
     }
 
@@ -731,10 +731,10 @@ fn test_named_patch_cli_selection_marker_and_rollback() {
     let apply_stdout = String::from_utf8_lossy(&apply_output.stdout);
     assert!(apply_stdout.contains("Which patch should be applied?"));
     assert!(apply_stdout.contains("Apply identifier:"));
-    assert!(game_dir.join("patch_v1.4.0/.applied_patch.json").is_file());
+    assert!(game_dir.join("Patch_v1.4.0/.applied_patch.json").is_file());
     assert!(
         !game_dir
-            .join("patch_security_hotfix/.applied_patch.json")
+            .join("Patch_security_hotfix/.applied_patch.json")
             .exists()
     );
     assert_eq!(
@@ -754,7 +754,7 @@ fn test_named_patch_cli_selection_marker_and_rollback() {
     );
     let rollback_stdout = String::from_utf8_lossy(&rollback_output.stdout);
     assert!(rollback_stdout.contains("latest apply identifier"));
-    assert!(!game_dir.join("patch_v1.4.0/.applied_patch.json").exists());
+    assert!(!game_dir.join("Patch_v1.4.0/.applied_patch.json").exists());
     assert_eq!(
         std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
         std::fs::read_to_string(base_dir.join("Old/config.ini")).unwrap()

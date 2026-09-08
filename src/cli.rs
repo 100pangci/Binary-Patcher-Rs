@@ -62,7 +62,7 @@ pub struct Cli {
     #[arg(
         long = "patch-name",
         global = true,
-        help = "自定义目录补丁名称，例如 v1.4.0（输出为 patch_v1.4.0/）"
+        help = "自定义目录补丁名称，例如 v1.4.0（输出为 Patch_v1.4.0/）"
     )]
     pub patch_name: Option<String>,
 

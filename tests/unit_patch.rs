@@ -11,11 +11,15 @@ fn test_patch_name_is_normalized_and_confined() {
 
     assert_eq!(
         patch_dir_for_name(root.path(), Some("v1.4.0")).unwrap(),
-        root.path().join("patch_v1.4.0")
+        root.path().join("Patch_v1.4.0")
+    );
+    assert_eq!(
+        patch_dir_for_name(root.path(), Some("Patch_v1.4.0")).unwrap(),
+        root.path().join("Patch_v1.4.0")
     );
     assert_eq!(
         patch_dir_for_name(root.path(), Some("patch_v1.4.0")).unwrap(),
-        root.path().join("patch_v1.4.0")
+        root.path().join("Patch_v1.4.0")
     );
     assert_eq!(
         patch_dir_for_name(root.path(), None).unwrap(),
@@ -40,15 +44,15 @@ fn test_patch_name_is_normalized_and_confined() {
 #[test]
 fn test_named_patch_discovery_requires_manifest() {
     let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("patch_v1.4.0")).unwrap();
-    std::fs::write(root.path().join("patch_v1.4.0/manifest.json"), "{}").unwrap();
-    std::fs::create_dir(root.path().join("patch_security_hotfix")).unwrap();
+    std::fs::create_dir(root.path().join("Patch_v1.4.0")).unwrap();
+    std::fs::write(root.path().join("Patch_v1.4.0/manifest.json"), "{}").unwrap();
+    std::fs::create_dir(root.path().join("Patch_security_hotfix")).unwrap();
     std::fs::write(
-        root.path().join("patch_security_hotfix/manifest.json"),
+        root.path().join("Patch_security_hotfix/manifest.json"),
         "{}",
     )
     .unwrap();
-    std::fs::create_dir(root.path().join("patch_incomplete")).unwrap();
+    std::fs::create_dir(root.path().join("Patch_incomplete")).unwrap();
     std::fs::create_dir(root.path().join("release_v1.4.0")).unwrap();
 
     let candidates = find_named_patch_dirs(root.path()).unwrap();
@@ -62,13 +66,13 @@ fn test_named_patch_discovery_requires_manifest() {
 #[test]
 fn test_applied_marker_is_found_and_removed() {
     let root = tempfile::tempdir().unwrap();
-    let patch_dir = root.path().join("patch_v1.4.0");
+    let patch_dir = root.path().join("Patch_v1.4.0");
     std::fs::create_dir(&patch_dir).unwrap();
     std::fs::write(patch_dir.join("manifest.json"), "{}").unwrap();
 
     let marker = write_applied_marker(root.path(), &patch_dir).unwrap();
     assert!(!marker.apply_id.is_empty());
-    assert_eq!(marker.patch_dir, "patch_v1.4.0");
+    assert_eq!(marker.patch_dir, "Patch_v1.4.0");
 
     let latest = latest_applied_patch(root.path()).unwrap().unwrap();
     assert_eq!(latest.0.id, "v1.4.0");
@@ -81,7 +85,7 @@ fn test_applied_marker_is_found_and_removed() {
 #[test]
 fn test_apply_choice_zero_exits_without_touching_target() {
     let root = tempfile::tempdir().unwrap();
-    for name in ["patch_v1.4.0", "patch_security_hotfix"] {
+    for name in ["Patch_v1.4.0", "Patch_security_hotfix"] {
         let patch_dir = root.path().join(name);
         std::fs::create_dir(&patch_dir).unwrap();
         std::fs::write(patch_dir.join("manifest.json"), "{}").unwrap();
@@ -114,13 +118,13 @@ fn test_apply_choice_zero_exits_without_touching_target() {
     assert!(
         !root
             .path()
-            .join("patch_v1.4.0/.applied_patch.json")
+            .join("Patch_v1.4.0/.applied_patch.json")
             .exists()
     );
     assert!(
         !root
             .path()
-            .join("patch_security_hotfix/.applied_patch.json")
+            .join("Patch_security_hotfix/.applied_patch.json")
             .exists()
     );
 }
@@ -130,10 +134,10 @@ fn test_apply_choice_zero_exits_without_touching_target() {
 fn test_patch_directory_symlink_is_rejected() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    std::os::unix::fs::symlink(outside.path(), root.path().join("patch_external")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.path().join("Patch_external")).unwrap();
 
     assert!(
-        binary_patcher::patch::validate_patch_dir(root.path(), &root.path().join("patch_external"))
+        binary_patcher::patch::validate_patch_dir(root.path(), &root.path().join("Patch_external"))
             .is_err()
     );
 }
@@ -142,7 +146,7 @@ fn test_patch_directory_symlink_is_rejected() {
 #[test]
 fn test_applied_marker_symlink_is_rejected() {
     let root = tempfile::tempdir().unwrap();
-    let patch_dir = root.path().join("patch_v1.4.0");
+    let patch_dir = root.path().join("Patch_v1.4.0");
     std::fs::create_dir(&patch_dir).unwrap();
     std::fs::write(patch_dir.join("manifest.json"), "{}").unwrap();
     let outside_marker = root.path().join("outside-marker.json");

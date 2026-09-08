@@ -11,7 +11,7 @@
 
 - **单文件补丁** — 对两个文件生成/应用补丁
 - **整目录打包** — 对比 `Old/` 与 `New/`，自动生成 `manifest.json` + 补丁文件 + 新增文件
-- **命名补丁包** — 使用 `--patch-name` 生成 `patch_<名称>/`，可在同一目录保存多个版本补丁
+- **命名补丁包** — 使用 `--patch-name` 生成 `Patch_<名称>/`，可在同一目录保存多个版本补丁
 - **补丁选择** — `apply_patch` 检测多个命名补丁后引导选择，避免误应用错误版本
 - **一键应用** — `apply_patch` 读取清单、校验 SHA256、备份原文件、执行补丁
 - **可追踪回滚** — 应用成功后写入应用标识，`rollback_patch` 自动定位最近一次应用的补丁；回滚完成后删除标识
@@ -93,7 +93,7 @@ binary_patcher --patch-name v1.4.0
 binary_patcher bundle --base-dir . --patch-name v1.4.0
 ```
 
-以上命令会生成 `patch_v1.4.0/`。传入 `patch_v1.4.0` 也会得到同样的目录名；名称只能作为当前目录的单级目录名使用。
+以上命令会生成 `Patch_v1.4.0/`。传入 `Patch_v1.4.0`（小写 `patch_v1.4.0` 亦可）也会得到同样的目录名；名称只能作为当前目录的单级目录名使用。
 
 ### 2. 应用整包补丁
 
@@ -111,9 +111,9 @@ binary_patcher bundle --base-dir . --patch-name v1.4.0
 ```text
 旧版本根目录/
 ├── apply_patch
-├── patch_v1.4.0/
+├── Patch_v1.4.0/
 │   └── manifest.json
-└── patch_security_hotfix/
+└── Patch_security_hotfix/
     └── manifest.json
 ```
 
@@ -126,7 +126,7 @@ binary_patcher bundle --base-dir . --patch-name v1.4.0
 0 - 退出
 ```
 
-这里只会列出名称以 `patch_` 开头、且直接包含 `manifest.json` 的目录。输入 `0` 不会修改目标目录并立即退出。没有命名补丁时，程序继续使用传统的 `Patch/` 目录。
+这里只会列出名称以 `Patch_` 开头、且直接包含 `manifest.json` 的目录。输入 `0` 不会修改目标目录并立即退出。没有命名补丁时，程序继续使用传统的 `Patch/` 目录。
 
 ```sh
 ./apply_patch
@@ -160,7 +160,7 @@ binary_patcher bundle --base-dir . --patch-name v1.4.0
 | `create <旧文件> <新文件> <补丁文件>` | 对两个文件创建单个补丁 |
 | `apply <旧文件> <补丁文件> <输出文件>` | 应用单个补丁 |
 | `bundle --base-dir <路径>` | 指定工作目录执行打包 |
-| `--patch-name <名称>` | 自定义目录补丁名称，例如 `v1.4.0`，输出为 `patch_v1.4.0/`；可用于无子命令模式或 `bundle` |
+| `--patch-name <名称>` | 自定义目录补丁名称，例如 `v1.4.0`，输出为 `Patch_v1.4.0/`；可用于无子命令模式或 `bundle` |
 | `--mode auto/stream/memory` | 补丁创建模式：`auto` 自动选择（默认）、`stream` 流式低内存、`memory` 全加载最优 |
 | `--format precise/fast` | 差分算法：`precise` suffix-string（补丁更小，默认）、`fast` hash（速度更快） |
 
@@ -168,13 +168,13 @@ binary_patcher bundle --base-dir . --patch-name v1.4.0
 
 | 参数 | 说明 |
 |------|------|
-| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `patch_<名称>/` |
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `Patch_<名称>/` |
 
 ### `rollback_patch`
 
 | 参数 | 说明 |
 |------|------|
-| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `patch_<名称>/` |
+| `--base-dir <路径>` | 旧版本根目录，默认为当前目录；可包含 `Patch/` 或 `Patch_<名称>/` |
 
 ## 项目结构
 

@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const NAMED_PATCH_PREFIX: &str = "patch_";
+pub const NAMED_PATCH_PREFIX: &str = "Patch_";
 pub const DEFAULT_PATCH_DIR_NAME: &str = "Patch";
 pub const APPLIED_MARKER_FILE_NAME: &str = ".applied_patch.json";
 const APPLIED_MARKER_FORMAT: u32 = 1;
@@ -41,16 +41,18 @@ pub struct AppliedPatchMarker {
 
 /// Convert a user-provided patch name into the directory name used on disk.
 ///
-/// Both `v1.4.0` and `patch_v1.4.0` result in `patch_v1.4.0`.  The returned
-/// name is always a single, safe directory component below `base_dir`.
+/// Both `v1.4.0` and `Patch_v1.4.0` (also accepted in lowercase) result in
+/// `Patch_v1.4.0`.  The returned name is always a single, safe directory
+/// component below `base_dir`.
 pub fn patch_dir_for_name(base_dir: &Path, patch_name: Option<&str>) -> anyhow::Result<PathBuf> {
     let Some(raw_name) = patch_name else {
         return Ok(base_dir.join(DEFAULT_PATCH_DIR_NAME));
     };
 
     let raw_name = raw_name.trim();
-    let id = raw_name
-        .strip_prefix(NAMED_PATCH_PREFIX)
+    let id = ["Patch_", "patch_"]
+        .into_iter()
+        .find_map(|prefix| raw_name.strip_prefix(prefix))
         .unwrap_or(raw_name);
 
     if !is_valid_patch_id(id) {
@@ -243,7 +245,7 @@ pub fn latest_applied_patch(
 /// Find named patch directories directly below `base_dir`.
 ///
 /// A directory is considered a patch candidate only when its name starts
-/// with `patch_`, has a non-empty suffix, and contains a manifest file.  The
+/// with `Patch_`, has a non-empty suffix, and contains a manifest file.  The
 /// directory itself must not be a symlink.
 pub fn find_named_patch_dirs(base_dir: &Path) -> anyhow::Result<Vec<PatchCandidate>> {
     let entries = match std::fs::read_dir(base_dir) {
