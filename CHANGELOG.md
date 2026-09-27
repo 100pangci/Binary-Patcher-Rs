@@ -3,7 +3,7 @@
 ## [v1.4.0] — 2026-09-27
 
 ### Added
-- **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 是**保持不变的差分基础文件**，为 target 生成二进制差分而非「删除 + 新增」；source 永不修改/删除，apply / rollback / journal 只操作 target
+- **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 作为差分基础文件，为 target 生成二进制差分而非「删除 + 新增」；source 默认原样保留，`delete_source=true` 时在目标校验成功后删除（删除前先备份，rollback 可恢复），apply / rollback / journal 崩溃恢复只负责 target
 - 映射严格校验：空路径、`old == new`、重复 old/new、链式映射（A→B 且 B→C）全部拒绝；文件存在性、`../`、绝对路径、符号链接防护复用现有安全机制
 - 每条映射可选 `delete_source`（默认 `false`）：为 `true` 时在目标生成并通过 SHA256 校验后删除源文件（删除前先备份，rollback 可恢复）
 - 映射路径「比较键」机制：统一 `\`、移除 `.`、折叠重复分隔符，Windows 下大小写不敏感（仅用于比较，实际访问路径保留原始大小写）
@@ -15,7 +15,12 @@
 ### Changed
 - **Manifest format 升至 1.4.0**：`ChangedEntry` 增加可选字段 `source_path`。旧 manifest 无该字段时按普通条目正常读取；1.3.x 工具读取 1.4.x manifest 会进入版本不兼容警告/拒绝路径，不会按旧语义静默执行
 - 文件映射的 apply/rollback 语义：默认 `delete_source=false` 时 source 保留、target 单独生成、rollback 只撤销/恢复 target；`delete_source=true` 时 source 仅在目标校验成功后删除，rollback 会从备份恢复 source
-- apply 结果满足 `apply(Old) == New` 不变量：`New/` 中保留的映射源同名文件保持不变，不再被全量复制为「新增」
+- `delete_source=false` 时 apply 结果满足 `apply(Old) == New`：`New/` 中保留的映射源同名文件保持不变，不再被全量复制为「新增」（`delete_source=true` 时源文件按声明删除）
+
+### Fixed
+- Manifest / apply 双重校验映射 source 与 target 不能解析到同一实际文件：规范化（`./`、重复分隔符）、Windows 大小写等价与 canonicalize 兜底均拒绝，且检查发生在任何备份 / 写 target / 删 source 之前
+- Windows 下映射的大小写不敏感匹配统一使用 comparison key：`mapped_old` / `mapped_new` 排除、`New` 中映射源存在性与内容变化检测、映射源目录删除判断不再漏判
+- 包含 mapping 的 manifest 在既无 journal 又无有效 `.applied_patch.json` 时拒绝 rollback（不修改任何文件），避免未应用过就回滚误删 target；有 journal 时仍按崩溃恢复处理
 
 ## [v1.3.1] — 2026-09-09
 

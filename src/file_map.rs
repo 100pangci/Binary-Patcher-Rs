@@ -1,10 +1,11 @@
 //! 显式文件名映射（mapping-aware diff）。
 //!
 //! 工作目录根目录下的可选文件 `file-map.json` 允许用户手动声明
-//! `Old/<old>` 与 `New/<new>` 属于同一个逻辑文件。mapping source 是保持
-//! 不变的差分基础文件，整包补丁会用它为 target 生成二进制差分
-//! （而不是识别为「删除 + 新增」），apply / rollback / journal 崩溃恢复
-//! 只负责 target，source 始终原样保留。
+//! `Old/<old>` 与 `New/<new>` 属于同一个逻辑文件。mapping source 作为差分
+//! 基础文件，整包补丁会用它为 target 生成二进制差分（而不是识别为
+//! 「删除 + 新增」），apply / rollback / journal 崩溃恢复只负责 target；
+//! source 默认原样保留，仅当 `delete_source=true` 时在 target 校验成功后
+//! 删除（删除前先备份，可回滚恢复）。
 //!
 //! 映射完全显式：程序不会根据文件名、basename、扩展名、大小或哈希
 //! 自动猜测映射关系。`file-map.json` 不存在时行为与旧版本完全一致。
@@ -119,14 +120,30 @@ fn looks_absolute(unified: &str) -> bool {
     bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
 }
 
+/// 统一的大小写不敏感比较键（Windows 下 ASCII 小写化）。
+///
+/// 仅用于匹配/排除/去重，实际文件访问必须使用真实路径。
 #[cfg(windows)]
-fn comparison_key(relative: &str) -> String {
+pub fn comparison_key(relative: &str) -> String {
     relative.to_ascii_lowercase()
 }
 
+/// 统一的大小写不敏感比较键（非 Windows 保持原样）。
+///
+/// 仅用于匹配/排除/去重，实际文件访问必须使用真实路径。
 #[cfg(not(windows))]
-fn comparison_key(relative: &str) -> String {
+pub fn comparison_key(relative: &str) -> String {
     relative.to_string()
+}
+
+/// 两个路径字符串是否指向同一逻辑文件。
+///
+/// 使用 [`normalize_mapping_path`] 的规范化结果与比较键判断，
+/// 因此 `./foo.bin` 与 `foo.bin`、Windows 下仅大小写不同的路径都会被判定为相同。
+pub fn is_same_logical_path(left: &str, right: &str) -> anyhow::Result<bool> {
+    let left = normalize_mapping_path(left)?;
+    let right = normalize_mapping_path(right)?;
+    Ok(left.key() == right.key())
 }
 
 /// 读取工作目录根目录下的可选 `file-map.json`。

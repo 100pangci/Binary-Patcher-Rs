@@ -19,6 +19,28 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     let manifest = Manifest::load(patch_dir)?;
     let backup_root = checked_backup_root_dir(patch_dir)?;
 
+    // 含 mapping 的 manifest：未应用过时回滚会先删除 target、再尝试找 backup，
+    // 存在数据丢失风险。有 journal 走崩溃恢复；有有效应用标记才允许正常回滚；
+    // 两者都没有则直接拒绝，且不修改任何文件。
+    if manifest
+        .changed
+        .iter()
+        .any(crate::manifest::ChangedEntry::is_renamed)
+    {
+        let journal_path = resolve_safe_path(patch_dir, crate::apply::JOURNAL_FILE_NAME)?;
+        crate::path::ensure_no_symlink_components(&journal_path)?;
+        if journal_path.exists() {
+            crate::apply::rollback_from_journal(base_dir, patch_dir)?;
+            return Ok(());
+        }
+        if crate::patch::load_applied_marker(patch_dir)?.is_none() {
+            anyhow::bail!(
+                "{}",
+                t!("rollback.mapping-not-applied", patch_dir.display())
+            );
+        }
+    }
+
     let changed = &manifest.changed;
     let added = &manifest.added;
     let deleted = &manifest.deleted;

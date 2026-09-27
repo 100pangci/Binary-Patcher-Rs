@@ -316,6 +316,80 @@ fn test_manifest_rejects_empty_source_path() {
 }
 
 #[test]
+fn test_manifest_rejects_source_same_as_target_with_dot_variant() {
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "data/foo.bin".to_string(),
+            source_path: Some("./data/foo.bin".to_string()),
+            delete_source: false,
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "data/foo.bin.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    let err = manifest.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("manifest.changed-source-same-as-target"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_manifest_rejects_source_same_as_target_case_variant_on_windows() {
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "data/Foo.bin".to_string(),
+            source_path: Some("data/foo.bin".to_string()),
+            delete_source: false,
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "data/Foo.bin.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    let err = manifest.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("manifest.changed-source-same-as-target"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_manifest_accepts_distinct_source_target() {
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "data/foo.chs".to_string(),
+            source_path: Some("data/foo.pak".to_string()),
+            delete_source: false,
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "data/foo.chs.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    assert!(manifest.validate().is_ok());
+}
+
+#[test]
 fn test_manifest_rejects_duplicate_patch_resource() {
     let entry = |path: &str| binary_patcher::manifest::ChangedEntry {
         path: path.to_string(),

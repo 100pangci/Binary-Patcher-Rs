@@ -359,6 +359,8 @@ pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> 
     let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
     let mut journal = ChangeJournal::new(base_dir, &backup_root, &journal_path);
 
+    // 必须在任何备份 / 写 target / 删 source 之前完成校验。
+    validate_mapped_source_targets(base_dir, &manifest)?;
     handle_interrupted_apply(base_dir, patch_dir)?;
     check_version_compat_or_prompt(&manifest)?;
     print_apply_summary(&manifest);
@@ -424,6 +426,43 @@ fn print_apply_summary(manifest: &Manifest) {
             manifest.deleted.len()
         )
     );
+}
+
+/// 应用前兜底校验：映射条目的 source 与 target 必须解析到不同文件。
+///
+/// manifest 校验已处理规范化（`./`、重复分隔符）与 Windows 大小写等价；
+/// 这里在修改任何文件之前，对两边都存在的路径再用 `canonicalize` 确认不是
+/// 同一物理文件（例如 Windows 尾随点/空格、8.3 短名等别名）。
+fn validate_mapped_source_targets(base_dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
+    for item in &manifest.changed {
+        if !item.is_renamed() {
+            continue;
+        }
+        let source_path = resolve_safe_path(base_dir, item.old_relative_path())?;
+        let target_path = resolve_safe_path(base_dir, &item.path)?;
+        if same_existing_file(&source_path, &target_path) {
+            anyhow::bail!(
+                "{}",
+                t!(
+                    "apply.source-target-same",
+                    item.old_relative_path(),
+                    item.path
+                )
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 两个路径是否指向同一物理文件；仅在两边都能 canonicalize 时判定。
+fn same_existing_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left_real), Ok(right_real)) => left_real == right_real,
+        _ => false,
+    }
 }
 
 fn apply_changed_files(

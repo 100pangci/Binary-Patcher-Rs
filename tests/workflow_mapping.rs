@@ -266,7 +266,8 @@ fn test_bundle_mapping_target_in_old_is_not_deleted() {
 }
 
 // ===========================================================================
-// Fidelity invariant: apply(Old) == New even when New keeps the source file
+// Fidelity invariant (delete_source=false): apply(Old) == New even when New
+// keeps the source file
 // ===========================================================================
 
 fn list_files(root: &Path) -> Vec<String> {
@@ -1056,5 +1057,215 @@ fn test_comprehensive_mapping_workspace() {
     assert!(
         game.join("data/foo.aos").is_file(),
         "source dir must survive"
+    );
+}
+
+// ===========================================================================
+// Rollback guard: mappings require journal or a valid applied marker
+// ===========================================================================
+
+#[test]
+fn test_rollback_mapping_without_apply_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.aos", b"old source payload");
+    write_file(base, "New", "foo.chs", b"new target payload");
+    write_mapping_file(base, &[("foo.aos", "foo.chs")]);
+    build_bundle(base);
+
+    let game = setup_game(base);
+    // 目标位置可能本来就有用户数据；未应用过的 rollback 绝不能删除它。
+    std::fs::write(game.join("foo.chs"), b"user data must survive").unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.mapping-not-applied"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        b"user data must survive",
+        "rejected rollback must not touch the target"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.aos")).unwrap(),
+        b"old source payload"
+    );
+    assert!(!game.join("Patch/.applied_patch.json").exists());
+}
+
+#[test]
+fn test_rollback_mapping_with_journal_uses_crash_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.aos", b"old source payload");
+    write_file(base, "New", "foo.chs", b"new target payload");
+    write_mapping_file(base, &[("foo.aos", "foo.chs")]);
+    build_bundle(base);
+
+    let game = setup_game(base);
+    // 模拟 apply 中途崩溃：target 已生成、journal 存在、marker 尚未写入。
+    std::fs::write(game.join("foo.chs"), b"patched payload").unwrap();
+    write_renamed_journal(&game.join("Patch"), "foo.aos", "foo.chs", false);
+
+    binary_patcher::rollback::rollback_bundle(&game).unwrap();
+
+    assert!(
+        !game.join("foo.chs").exists(),
+        "journal recovery must remove the generated target"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.aos")).unwrap(),
+        b"old source payload",
+        "source must stay untouched"
+    );
+    assert!(
+        !game
+            .join("Patch")
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "journal must be removed after crash recovery"
+    );
+}
+
+// ===========================================================================
+// Windows case-insensitive matching consistency (comparison key)
+// ===========================================================================
+
+#[cfg(windows)]
+#[test]
+fn test_bundle_case_insensitive_leftover_source_in_new() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    // New 中忘记删除旧名文件，且大小写不同（Windows 下是同一逻辑文件）。
+    write_file(base, "New", "FOO.PAK", b"old payload");
+    write_file(base, "New", "foo.chs", b"new payload changed");
+    write_mapping_file(base, &[("foo.pak", "foo.chs")]);
+
+    build_bundle(base);
+
+    let patch_dir = base.join("Patch");
+    let manifest = Manifest::load(&patch_dir).unwrap();
+    assert_eq!(manifest.changed.len(), 1);
+    assert_eq!(
+        manifest.added.len(),
+        0,
+        "case-variant leftover source must not be added"
+    );
+    assert_eq!(manifest.deleted.len(), 0);
+    assert!(!patch_dir.join("FOO.PAK.new").exists());
+    assert!(!patch_dir.join("foo.pak.new").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn test_bundle_case_insensitive_source_modified_in_new_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.aos", b"original source");
+    write_file(base, "New", "FOO.AOS", b"modified source");
+    write_file(base, "New", "foo.chs", b"target payload");
+    write_mapping_file(base, &[("foo.aos", "foo.chs")]);
+
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.source-modified-in-new"),
+        "unexpected error: {err}"
+    );
+    assert!(!base.join("Patch/manifest.json").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn test_bundle_case_insensitive_target_in_old_not_deleted() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    // Old 中已有目标文件的仅大小写不同版本，不能被普通扫描判为删除。
+    write_file(base, "Old", "FOO.CHS", b"previous target");
+    write_file(base, "New", "foo.chs", b"new payload changed");
+    write_mapping_file(base, &[("foo.pak", "foo.chs")]);
+
+    build_bundle(base);
+
+    let manifest = Manifest::load(&base.join("Patch")).unwrap();
+    assert_eq!(manifest.changed.len(), 1);
+    assert_eq!(manifest.added.len(), 0);
+    assert_eq!(
+        manifest.deleted.len(),
+        0,
+        "case-variant target in Old must not be scheduled for deletion"
+    );
+
+    let game = setup_game(base);
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        b"new payload changed"
+    );
+    assert_eq!(std::fs::read(game.join("foo.pak")).unwrap(), b"old payload");
+
+    binary_patcher::rollback::rollback_bundle(&game).unwrap();
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        b"previous target",
+        "rollback must restore the original case-variant target"
+    );
+}
+
+// ===========================================================================
+// Apply-time alias guard (canonicalize fallback)
+// ===========================================================================
+
+#[cfg(windows)]
+#[test]
+fn test_apply_rejects_source_target_resolving_to_same_file() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.aos", b"old source payload");
+    write_file(base, "Old", "foo.chs", b"pre-existing target");
+    write_file(base, "New", "foo.chs", b"new target payload");
+    write_mapping_file(base, &[("foo.aos", "foo.chs")]);
+    build_bundle(base);
+
+    // Windows 忽略路径尾随的点/空格，因此 "foo.chs." 与 "foo.chs" 是同一文件；
+    // 字符串与比较键都不同，只有 canonicalize 兜底能识别。
+    let manifest_path = base.join("Patch/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    json["changed"][0]["source_path"] = serde_json::Value::String("foo.chs.".to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    let game = setup_game(base);
+    let before_target = std::fs::read(game.join("foo.chs")).unwrap();
+    let backup_root = game.join("Patch/.backup_before_patch");
+    let backups_before = count_files(&backup_root);
+
+    let err = binary_patcher::apply::apply_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.source-target-same"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        before_target,
+        "rejected apply must not overwrite the target"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.aos")).unwrap(),
+        b"old source payload"
+    );
+    assert_eq!(
+        count_files(&backup_root),
+        backups_before,
+        "rejected apply must not create backups"
+    );
+    assert!(
+        !game
+            .join("Patch")
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "rejected apply must not leave a journal"
     );
 }

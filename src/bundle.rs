@@ -1,6 +1,6 @@
 use crate::cli::PatchFormat;
 use crate::cli::PatchMode;
-use crate::file_map::FileMap;
+use crate::file_map::{FileMap, comparison_key};
 use crate::fmt::format_size;
 use crate::fs::relative_maps;
 use crate::hash::sha256_of_file;
@@ -69,11 +69,11 @@ pub fn build_patch_bundle_with_name(
 
     // Step 1: 先处理显式映射，生成 mapping-aware diff。
     let mappings = resolve_mappings(&file_map, &old_files, &new_files)?;
-    let mut mapped_old: BTreeSet<String> = BTreeSet::new();
-    let mut mapped_new: BTreeSet<String> = BTreeSet::new();
+    let mut mapped_old_keys: BTreeSet<String> = BTreeSet::new();
+    let mut mapped_new_keys: BTreeSet<String> = BTreeSet::new();
     for mapping in &mappings {
-        mapped_old.insert(mapping.old_rel.clone());
-        mapped_new.insert(mapping.new_rel.clone());
+        mapped_old_keys.insert(comparison_key(&mapping.old_rel));
+        mapped_new_keys.insert(comparison_key(&mapping.new_rel));
     }
 
     // 映射源是「保持不变的差分基础文件」（delete_source=false 时）：
@@ -81,7 +81,9 @@ pub fn build_patch_bundle_with_name(
     //   或必须不存在（delete_source=true，否则 apply 后无法与 New 一致）。
     for mapping in &mappings {
         let old_rel = &mapping.old_rel;
-        let Some(new_source) = new_files.get(old_rel) else {
+        // Windows 大小写不敏感：New 中的同名源可能使用不同大小写，
+        // 统一通过比较键匹配，再以真实路径访问文件。
+        let Some(new_source_key) = find_scanned_key(&new_files, old_rel) else {
             continue;
         };
         if mapping.delete_source {
@@ -93,6 +95,9 @@ pub fn build_patch_bundle_with_name(
         let old_source = old_files
             .get(old_rel)
             .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", old_rel)))?;
+        let new_source = new_files
+            .get(&new_source_key)
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", old_rel)))?;
         if sha256_of_file(old_source)? != sha256_of_file(new_source)? {
             anyhow::bail!("{}", t!("filemap.source-modified-in-new", old_rel));
         }
@@ -141,7 +146,8 @@ pub fn build_patch_bundle_with_name(
     // Step 2: 已参与映射的路径（源与目标）从普通扫描中整体排除，
     // 避免误判为删除 + 新增，也避免映射目标被 deleted 再次删除。
     for relative_path in all_paths {
-        if mapped_old.contains(&relative_path) || mapped_new.contains(&relative_path) {
+        let relative_key = comparison_key(&relative_path);
+        if mapped_old_keys.contains(&relative_key) || mapped_new_keys.contains(&relative_key) {
             continue;
         }
         let old_path = old_files.get(&relative_path);
@@ -202,7 +208,8 @@ pub fn build_patch_bundle_with_name(
     for rel_path in old_dirs.keys() {
         // 映射源的目录链受保护，即使 New 中不存在也不能删除，
         // 否则 apply 会连保留的 source 一起递归删除。
-        if !new_dirs.contains_key(rel_path) && !protected_dirs.contains(rel_path) {
+        // New 中目录的存在性同样按比较键判断（Windows 大小写不敏感）。
+        if find_scanned_key(&new_dirs, rel_path).is_none() && !protected_dirs.contains(rel_path) {
             manifest.deleted_dirs.push(rel_path.clone());
             println!("{}", t!("bundle.deleted-dir", &rel_path));
             deleted_dirs_count += 1;
@@ -233,8 +240,8 @@ struct ResolvedMapping {
 
 /// 将 file-map.json 中的用户路径解析为实际扫描到的相对路径。
 ///
-/// 完全匹配优先；Windows 文件系统大小写不敏感，因此额外做一次
-/// ASCII 大小写不敏感回退，避免因大小写差异漏掉映射。
+/// 完全匹配优先；其余情况统一使用 [`comparison_key`] 匹配
+/// （Windows 下大小写不敏感），避免因大小写差异漏掉映射。
 fn resolve_mappings(
     file_map: &FileMap,
     old_files: &BTreeMap<String, PathBuf>,
@@ -279,21 +286,19 @@ fn protected_dirs_of(mappings: &[ResolvedMapping]) -> BTreeSet<String> {
     protected
 }
 
+/// 在扫描结果中查找与 `relative_path` 匹配的真实键。
+///
+/// 完全匹配优先，否则使用 [`comparison_key`] 回退（Windows 大小写不敏感）；
+/// 返回的始终是磁盘上的真实相对路径，用于实际文件访问。
 fn find_scanned_key(files: &BTreeMap<String, PathBuf>, relative_path: &str) -> Option<String> {
-    if files.contains_key(relative_path) {
-        return Some(relative_path.to_string());
+    if let Some((key, _)) = files.get_key_value(relative_path) {
+        return Some(key.clone());
     }
-    #[cfg(windows)]
-    {
-        files
-            .keys()
-            .find(|key| key.eq_ignore_ascii_case(relative_path))
-            .cloned()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
+    let target_key = comparison_key(relative_path);
+    files
+        .keys()
+        .find(|key| comparison_key(key) == target_key)
+        .cloned()
 }
 
 struct ChangeTask<'a> {

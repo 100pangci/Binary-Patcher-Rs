@@ -184,6 +184,23 @@ impl Manifest {
             if item.source_path.as_deref().is_some_and(str::is_empty) {
                 anyhow::bail!("{}", t!("manifest.changed-source-path-empty", idx));
             }
+            // source 与 target 即使字符串不同，也可能经规范化（`./`、重复分隔符）
+            // 或 Windows 大小写等价后指向同一文件；此类条目在 apply 时会导致
+            // 自覆盖 / 自删除，必须在 manifest 阶段拒绝。
+            if let Some(source) = item.source_path.as_deref()
+                && source != item.path
+                && crate::file_map::is_same_logical_path(source, &item.path)?
+            {
+                anyhow::bail!(
+                    "{}",
+                    t!(
+                        "manifest.changed-source-same-as-target",
+                        idx,
+                        source,
+                        item.path
+                    )
+                );
+            }
             if item.delete_source && !item.is_renamed() {
                 anyhow::bail!(
                     "{}",
