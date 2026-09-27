@@ -43,6 +43,31 @@ fn test_restore_backup_no_backup() {
     assert!(!binary_patcher::backup::restore_backup(&target, dir.path(), &backup_root).unwrap());
 }
 
+#[test]
+fn test_restore_backup_copy_keeps_backup_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
+    let target = dir.path().join("file.txt");
+    std::fs::write(&target, "original").unwrap();
+    let backup = binary_patcher::backup::create_backup(&target, dir.path(), &backup_root).unwrap();
+    std::fs::write(&target, "patched").unwrap();
+
+    assert!(
+        binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+    assert!(
+        backup.exists(),
+        "copy restore must keep the backup so rollback can be retried"
+    );
+
+    // 重复恢复幂等：可重入 rollback 依赖该性质。
+    assert!(
+        binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+}
+
 // ===========================================================================
 // Backup retry on name collision
 // ===========================================================================

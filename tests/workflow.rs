@@ -344,6 +344,184 @@ fn test_rollback_rejects_added_target_replaced_by_non_empty_directory() {
     );
 }
 
+#[test]
+fn test_rollback_restores_added_target_overwritten_user_file() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    // 用户在 added 目标位置已有自己的文件：apply 必须先备份再覆盖。
+    std::fs::write(game_dir.join("new_file.dll"), "user original dll").unwrap();
+
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll")).unwrap(),
+        "new dll content"
+    );
+
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll")).unwrap(),
+        "user original dll",
+        "rollback must restore the pre-existing file at an added target"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(
+        !game_dir.join("sub/extra.txt").exists(),
+        "added files without a backup must still be removed"
+    );
+    assert!(
+        game_dir.join("deprecated.log").exists(),
+        "deleted files must be restored"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "successful rollback must clear the applied marker"
+    );
+}
+
+#[test]
+fn test_rollback_resumes_after_partial_restore() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    copy_tree_files(&base_dir.join("Patch"), &game_dir.join("Patch"));
+    std::fs::write(game_dir.join("new_file.dll"), "user original dll").unwrap();
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+
+    // 模拟上一次 rollback 中途失败后留下的状态：
+    // changed 已恢复为旧内容，added（覆盖用户文件）已从备份恢复，备份保留。
+    std::fs::write(game_dir.join("config.ini"), "[section]\nkey=old\n").unwrap();
+    let added_target = game_dir.join("new_file.dll");
+    let backup_root = game_dir.join("Patch/.backup_before_patch");
+    let backup = binary_patcher::backup::find_backup(&added_target, &game_dir, &backup_root)
+        .unwrap()
+        .expect("added target must have a backup");
+    std::fs::copy(&backup, &added_target).unwrap();
+
+    // 再次 rollback 必须能通过 preflight 并继续完成，而不是被卡死。
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll")).unwrap(),
+        "user original dll"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(!game_dir.join("sub/extra.txt").exists());
+    assert!(game_dir.join("deprecated.log").exists());
+    assert!(game_dir.join("deep/nested/old_cache.tmp").exists());
+    assert!(
+        !game_dir
+            .join("Patch")
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists()
+    );
+}
+
+#[test]
+fn test_rollback_restores_missing_added_target_from_backup() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    copy_tree_files(&base_dir.join("Patch"), &game_dir.join("Patch"));
+    std::fs::write(game_dir.join("new_file.dll"), "user original dll").unwrap();
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+
+    // 模拟上一次 rollback 删除了目标、但尚未从备份恢复就中断。
+    std::fs::remove_file(game_dir.join("new_file.dll")).unwrap();
+
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll")).unwrap(),
+        "user original dll",
+        "missing added target must be restored from its backup"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_rollback_can_retry_after_midway_failure() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // FILE_SHARE_READ：仅允许读共享（不含 FILE_SHARE_DELETE）。
+    const FILE_SHARE_READ: u32 = 0x1;
+
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+    let marker_path = game_patch.join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME);
+
+    // 仅允许读共享的句柄：目标文件无法删除，模拟 rollback 在第一个
+    // changed 条目上中途失败。preflight 只读不受影响。
+    let blocked = game_dir.join("config.ini");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&blocked)
+        .unwrap();
+
+    let result = binary_patcher::rollback::rollback_bundle(&game_dir);
+    assert!(result.is_err(), "locked target must fail rollback");
+    assert!(
+        marker_path.exists(),
+        "failed rollback must keep the applied marker"
+    );
+
+    drop(lock);
+
+    // 再次 rollback 必须能继续完成。
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert!(!marker_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(game_dir.join("deprecated.log").exists());
+    assert!(game_dir.join("deep/nested/old_cache.tmp").exists());
+    assert!(!game_dir.join("new_file.dll").exists());
+}
+
 // ===========================================================================
 // Deleted files: missing / hash mismatch must abort and roll back
 // ===========================================================================
@@ -1131,6 +1309,66 @@ fn test_journal_malformed_json_errors() {
     let result = binary_patcher::apply::rollback_from_journal(base, &patch_dir);
     assert!(result.is_err());
     assert!(journal_path.exists());
+}
+
+#[test]
+fn test_journal_partial_recovery_failure_keeps_journal_and_marker() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+    let journal_path = game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    let marker_path = game_patch.join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME);
+
+    // added 目标被用户替换为目录，journal 恢复到该条目必然失败。
+    std::fs::remove_file(game_dir.join("new_file.dll")).unwrap();
+    std::fs::create_dir(game_dir.join("new_file.dll")).unwrap();
+    std::fs::write(game_dir.join("new_file.dll/user.txt"), "user data").unwrap();
+    std::fs::write(
+        &journal_path,
+        r#"[
+            {"type":"patched","path":"config.ini"},
+            {"type":"added","path":"new_file.dll","had_backup":false}
+        ]"#,
+    )
+    .unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("journal.rollback-failed"),
+        "unexpected error: {err}"
+    );
+
+    // 失败条目之前的条目已经恢复，失败的条目原样保留。
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n",
+        "already recovered entries must stay recovered"
+    );
+    assert!(
+        game_dir.join("new_file.dll").is_dir(),
+        "conflicting path must stay untouched"
+    );
+    assert!(
+        journal_path.exists(),
+        "partially failed recovery must keep the journal"
+    );
+    assert!(
+        marker_path.exists(),
+        "partially failed recovery must keep the applied marker"
+    );
+
+    // 处理掉冲突后再次 rollback：应继续完成并清理 journal 与 marker。
+    std::fs::remove_dir_all(game_dir.join("new_file.dll")).unwrap();
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert!(!journal_path.exists(), "journal must be removed on success");
+    assert!(!marker_path.exists(), "marker must be cleared on success");
+    assert!(!game_dir.join("new_file.dll").exists());
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
 }
 
 #[test]

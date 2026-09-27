@@ -117,6 +117,7 @@
   "journal.removed": "  [rollback] 已删除: {0}",
   "journal.recreated-dir": "  [rollback] 已重建目录: {0}",
   "journal.rollback-complete": "  [rollback] 所有更改已撤销。",
+  "journal.rollback-failed": "  [rollback] 有 {0} 项恢复失败；已保留应用日志，可再次运行以继续恢复。",
   "apply.marker-created": "补丁应用完成，标识符: {0}（补丁目录: {1}）",
   "apply.output-generated": "输出文件 '{0}' 已生成。",
   "rollback.summary": "检测到可回滚内容: 变更 {0}，新增 {1}，删除 {2}",

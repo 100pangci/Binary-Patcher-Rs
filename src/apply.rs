@@ -131,7 +131,10 @@ impl ChangeJournal {
         Ok(())
     }
 
-    fn rollback(&self) {
+    /// 按日志逆序尽力恢复所有条目；任一恢复失败则返回错误。
+    /// 调用方在失败时必须保留 journal（与 marker），以便再次运行继续恢复。
+    fn rollback(&self) -> anyhow::Result<()> {
+        let mut failures = 0usize;
         for entry in self.entries.iter().rev() {
             match entry {
                 JournalEntry::Patched { target }
@@ -142,6 +145,7 @@ impl ChangeJournal {
                 } => {
                     if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
                         eprintln!("{}", t!("journal.error", target.display(), e));
+                        failures += 1;
                     } else {
                         println!("{}", t!("journal.restored", target.display()));
                     }
@@ -153,6 +157,7 @@ impl ChangeJournal {
                     if target.exists() {
                         if let Err(e) = std::fs::remove_file(target) {
                             eprintln!("{}", t!("journal.error", target.display(), e));
+                            failures += 1;
                         } else {
                             println!("{}", t!("journal.removed", target.display()));
                         }
@@ -165,6 +170,7 @@ impl ChangeJournal {
                     if !target.exists() {
                         if let Err(e) = std::fs::create_dir_all(target) {
                             eprintln!("{}", t!("journal.error", target.display(), e));
+                            failures += 1;
                         } else {
                             println!("{}", t!("journal.recreated-dir", target.display()));
                         }
@@ -181,12 +187,14 @@ impl ChangeJournal {
                     if *target_had_backup {
                         if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
                             eprintln!("{}", t!("journal.error", target.display(), e));
+                            failures += 1;
                         } else {
                             println!("{}", t!("journal.restored", target.display()));
                         }
                     } else if target.exists() {
                         if let Err(e) = std::fs::remove_file(target) {
                             eprintln!("{}", t!("journal.error", target.display(), e));
+                            failures += 1;
                         } else {
                             println!("{}", t!("journal.removed", target.display()));
                         }
@@ -199,6 +207,7 @@ impl ChangeJournal {
                     if *delete_source {
                         if let Err(e) = restore_backup(source, &self.base_dir, &self.backup_root) {
                             eprintln!("{}", t!("journal.error", source.display(), e));
+                            failures += 1;
                         } else {
                             println!("{}", t!("journal.restored", source.display()));
                         }
@@ -206,7 +215,11 @@ impl ChangeJournal {
                 }
             }
         }
+        if failures > 0 {
+            anyhow::bail!("{}", t!("journal.rollback-failed", failures))
+        }
         println!("{}", t!("journal.rollback-complete"));
+        Ok(())
     }
 }
 
@@ -257,19 +270,23 @@ fn do_journal_rollback(
     base_dir: &Path,
     backup_root: &Path,
     journal_path: &Path,
-) {
+) -> anyhow::Result<()> {
     let journal = ChangeJournal {
         entries,
         base_dir: base_dir.to_path_buf(),
         backup_root: backup_root.to_path_buf(),
         journal_path: journal_path.to_path_buf(),
     };
-    journal.rollback();
+    // 只有全部条目恢复成功才删除 journal；任一失败时保留，
+    // 用户可以再次运行继续恢复。
+    journal.rollback()?;
     let _ = std::fs::remove_file(journal_path);
+    Ok(())
 }
 
 /// 从磁盘上的应用日志回滚一次未完成的 apply（崩溃恢复）。
 /// 供 apply_patch 启动时的中断检测与 rollback_patch 复用。
+/// 恢复失败时返回 Err 并保留 journal，失败前完成的条目不会破坏现有状态。
 pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
     let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
     crate::path::ensure_no_symlink_components(&journal_path)?;
@@ -282,8 +299,7 @@ pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Resul
         base_dir,
         &checked_backup_root_dir(patch_dir)?,
         &journal_path,
-    );
-    Ok(())
+    )
 }
 
 fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> {
@@ -336,7 +352,7 @@ fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result
         base_dir,
         &backup_root_dir(patch_dir),
         &journal_path,
-    );
+    )?;
     println!("{}", t!("apply.journal-rolled-back"));
     Ok(())
 }
@@ -393,8 +409,15 @@ pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> 
         }
         Err(e) => {
             eprintln!("\n{}", t!("apply.rollback-triggered"));
-            journal.rollback();
-            let _ = std::fs::remove_file(&journal_path);
+            match journal.rollback() {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&journal_path);
+                }
+                Err(re) => {
+                    // 自动回滚未全部成功：保留 journal 供 rollback_patch 再次恢复。
+                    eprintln!("{re}");
+                }
+            }
             Err(e)
         }
     }
@@ -471,7 +494,7 @@ fn ensure_manifest_paths_outside_patch_dir(
     let patch_abs = std::path::absolute(patch_dir)?;
     let ensure_outside = |relative_path: &str| -> anyhow::Result<()> {
         let resolved = resolve_safe_path(base_dir, relative_path)?;
-        if resolved.starts_with(&patch_abs) {
+        if logical_path_within(&resolved, &patch_abs) {
             anyhow::bail!(
                 "{}",
                 t!(
@@ -500,6 +523,29 @@ fn ensure_manifest_paths_outside_patch_dir(
         ensure_outside(dir)?;
     }
     Ok(())
+}
+
+/// `path` 是否位于（或等于）`dir` 内部。
+///
+/// 组件级比较使用 [`crate::file_map::comparison_key`]：Windows/macOS 下
+/// 大小写不敏感，因此 `Patch/evil.txt` 与 `patch/evil.txt` 都会被识别为
+/// 指向补丁目录内部，堵住 `Path::starts_with` 的大小写绕过。
+fn logical_path_within(path: &Path, dir: &Path) -> bool {
+    let dir_components: Vec<_> = dir.components().collect();
+    let path_components: Vec<_> = path.components().collect();
+    if dir_components.is_empty() || path_components.len() < dir_components.len() {
+        return false;
+    }
+    path_components
+        .iter()
+        .zip(&dir_components)
+        .all(|(path_component, dir_component)| {
+            let path_key =
+                crate::file_map::comparison_key(&path_component.as_os_str().to_string_lossy());
+            let dir_key =
+                crate::file_map::comparison_key(&dir_component.as_os_str().to_string_lossy());
+            path_key == dir_key
+        })
 }
 
 /// 两个路径是否指向同一物理文件；仅在两边都能 canonicalize 时判定。

@@ -1552,3 +1552,35 @@ fn test_apply_rejects_manifest_path_inside_patch_dir() {
         "rejected apply must not leave a journal"
     );
 }
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn test_apply_rejects_manifest_path_inside_patch_dir_case_variant() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+    build_bundle(base);
+
+    // 大小写变体（patch/ 与 Patch/ 在 Windows/macOS 下是同一目录）必须被识别。
+    let manifest_path = base.join("Patch/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    json["changed"][0]["path"] = serde_json::Value::String("patch/evil.txt".to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    let game = setup_game(base);
+    let before = std::fs::read(game.join("foo.pak")).unwrap();
+    let err = binary_patcher::apply::apply_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.pak")).unwrap(),
+        before,
+        "rejected apply must not touch game files"
+    );
+    assert!(!game.join("patch/evil.txt").exists());
+    assert!(!game.join("Patch/evil.txt").exists());
+}

@@ -1,4 +1,4 @@
-use crate::backup::{checked_backup_root_dir, restore_backup};
+use crate::backup::{checked_backup_root_dir, find_backup, restore_backup_copy};
 use crate::fs::cleanup_empty_dirs;
 use crate::hash::sha256_of_file;
 use crate::manifest::Manifest;
@@ -38,9 +38,10 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
         anyhow::bail!("{}", t!("rollback.not-applied", patch_dir.display()));
     }
 
-    // 完整 preflight：所有「apply 结束时应有的状态」都必须成立才允许回滚。
-    // 一旦任何文件已被用户改动，直接拒绝，且不修改任何文件。
-    preflight_rollback_state(base_dir, &manifest)?;
+    // 完整 preflight：所有「apply 结束时应有的状态」或「该条目已完成
+    // rollback 的状态」都必须成立才允许回滚；这样中途失败的 rollback
+    // 可以再次运行继续完成。一旦任何文件被用户改动，直接拒绝且不修改任何文件。
+    preflight_rollback_state(base_dir, &manifest, &backup_root)?;
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -90,14 +91,15 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
             }
 
             // 2. 如果应用前 target 已存在，恢复其原始备份。
-            if restore_backup(&target_path, base_dir, &backup_root)? {
+            // 复制恢复并保留备份：中途失败后重跑仍可通过备份校验继续完成。
+            if restore_backup_copy(&target_path, base_dir, &backup_root)? {
                 restored_count += 1;
             }
 
             // 3. delete_source=true 时源文件在应用成功后已被删除，从备份恢复。
             if item.delete_source {
                 let source_path = resolve_safe_path(base_dir, item.old_relative_path())?;
-                if restore_backup(&source_path, base_dir, &backup_root)? {
+                if restore_backup_copy(&source_path, base_dir, &backup_root)? {
                     restored_count += 1;
                 } else {
                     println!("{}", t!("rollback.skip-no-backup"));
@@ -116,7 +118,7 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
         } else {
             let target_path = resolve_safe_path(base_dir, &item.path)?;
             println!("{}", t!("rollback.restore-changed", item.path));
-            if restore_backup(&target_path, base_dir, &backup_root)? {
+            if restore_backup_copy(&target_path, base_dir, &backup_root)? {
                 restored_count += 1;
             } else {
                 println!("{}", t!("rollback.skip-no-backup"));
@@ -127,7 +129,7 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     for item in deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
         println!("{}", t!("rollback.restore-deleted", item.path));
-        if restore_backup(&target_path, base_dir, &backup_root)? {
+        if restore_backup_copy(&target_path, base_dir, &backup_root)? {
             restored_count += 1;
         } else {
             println!("{}", t!("rollback.skip-no-backup"));
@@ -142,20 +144,25 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
                 std::fs::remove_file(&target_path)?;
                 removed_count += 1;
                 println!("{}", t!("rollback.removed-file", target_path.display()));
-                if let Some(parent) = target_path.parent() {
-                    for dir in cleanup_empty_dirs(parent, base_dir)? {
-                        println!(
-                            "{}",
-                            t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
-                        );
-                    }
-                }
             } else if target_path.is_dir() {
                 // added 文件后来变成目录（可能是用户数据）：绝不递归删除。
                 anyhow::bail!("{}", t!("rollback.added-is-dir", item.path));
             }
-        } else {
+        }
+        // 应用前已存在同名文件（added 覆盖用户文件）时必须恢复原文件；
+        // 已恢复完成的条目重复恢复也是幂等的（复制恢复，备份保留）。
+        if restore_backup_copy(&target_path, base_dir, &backup_root)? {
+            restored_count += 1;
+        } else if !target_path.exists() {
             println!("{}", t!("rollback.skip-not-exists", target_path.display()));
+        }
+        if let Some(parent) = target_path.parent() {
+            for dir in cleanup_empty_dirs(parent, base_dir)? {
+                println!(
+                    "{}",
+                    t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
+                );
+            }
         }
     }
 
@@ -203,23 +210,29 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
 
 /// rollback 前状态校验（只读）：
 ///
-/// - changed / mapped target：存在时必须匹配 `new_sha256`；
-/// - added：必须仍是普通文件且匹配 `new_sha256`；
-/// - deleted：必须保持不存在；
-/// - `delete_source=true` 的 source：必须保持不存在。
+/// 每个条目都必须处于「已 Apply」或「该条目已完成 rollback」两种状态之一，
+/// 这样中途失败的 rollback 可以再次运行继续完成，而不会破坏现有状态：
 ///
-/// 任一项不满足都返回错误，调用方不得在失败前修改任何文件。
-fn preflight_rollback_state(base_dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
+/// - 路径不存在：允许（`added`/映射 target 已删除，或 `deleted` 已恢复为删除态）；
+/// - 普通文件且 SHA256 命中「apply 结果或 rollback 后应有内容」：允许；
+/// - 普通文件且内容与其最新备份一致：允许（上一轮 rollback 已恢复、备份保留）。
+///
+/// 目录、符号链接与用户改动后的内容一律拒绝；调用方不得在失败前修改文件。
+fn preflight_rollback_state(
+    base_dir: &Path,
+    manifest: &Manifest,
+    backup_root: &Path,
+) -> anyhow::Result<()> {
     for item in &manifest.changed {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        if target_path.exists()
-            && (!target_path.is_file() || sha256_of_file(&target_path)? != item.new_sha256)
-        {
+        let allowed = [item.new_sha256.as_str(), item.old_sha256.as_str()];
+        if !rollback_state_allowed(&target_path, &allowed, base_dir, backup_root)? {
             anyhow::bail!("{}", t!("rollback.preflight-changed", item.path));
         }
         if item.is_renamed() && item.delete_source {
             let source_path = resolve_safe_path(base_dir, item.old_relative_path())?;
-            if source_path.exists() {
+            let allowed = [item.old_sha256.as_str()];
+            if !rollback_state_allowed(&source_path, &allowed, base_dir, backup_root)? {
                 anyhow::bail!(
                     "{}",
                     t!("rollback.preflight-source", item.old_relative_path())
@@ -230,19 +243,46 @@ fn preflight_rollback_state(base_dir: &Path, manifest: &Manifest) -> anyhow::Res
 
     for item in &manifest.added {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        let is_regular_file = std::fs::symlink_metadata(&target_path)
-            .is_ok_and(|metadata| metadata.file_type().is_file());
-        if !is_regular_file || sha256_of_file(&target_path)? != item.new_sha256 {
+        let allowed = [item.new_sha256.as_str()];
+        if !rollback_state_allowed(&target_path, &allowed, base_dir, backup_root)? {
             anyhow::bail!("{}", t!("rollback.preflight-added", item.path));
         }
     }
 
     for item in &manifest.deleted {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        if target_path.exists() {
+        let allowed = [item.old_sha256.as_str()];
+        if !rollback_state_allowed(&target_path, &allowed, base_dir, backup_root)? {
             anyhow::bail!("{}", t!("rollback.preflight-deleted", item.path));
         }
     }
 
     Ok(())
+}
+
+/// 判断路径是否处于可安全回滚的状态，见 [`preflight_rollback_state`]。
+fn rollback_state_allowed(
+    target_path: &Path,
+    applied_or_restored_hashes: &[&str],
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<bool> {
+    let metadata = match std::fs::symlink_metadata(target_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Ok(false);
+    }
+
+    let current_hash = sha256_of_file(target_path)?;
+    if applied_or_restored_hashes.contains(&current_hash.as_str()) {
+        return Ok(true);
+    }
+
+    if let Some(backup_path) = find_backup(target_path, base_dir, backup_root)? {
+        return Ok(sha256_of_file(&backup_path)? == current_hash);
+    }
+    Ok(false)
 }

@@ -90,11 +90,15 @@ fn open_backup_file(
     }
 }
 
-pub fn restore_backup(
+/// 查找 `target_path` 对应的最新备份文件。
+///
+/// 优先在备份根目录中的对应子目录查找，未命中时回退到目标文件所在目录
+/// （兼容旧式备份布局）。仅接受普通文件，忽略符号链接与目录。
+pub fn find_backup(
     target_path: &Path,
     base_dir: &Path,
     backup_root: &Path,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<PathBuf>> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -122,18 +126,6 @@ pub fn restore_backup(
             .map(|(path, _)| path)
     };
 
-    let do_restore = |backup_path: &Path| -> anyhow::Result<bool> {
-        crate::path::ensure_parent_dir(target_path)?;
-        if target_path.exists() {
-            std::fs::remove_file(target_path)?;
-        }
-        if std::fs::rename(backup_path, target_path).is_err() {
-            std::fs::copy(backup_path, target_path)?;
-            std::fs::remove_file(backup_path)?;
-        }
-        Ok(true)
-    };
-
     let rel = target_path
         .parent()
         .and_then(|p| p.strip_prefix(base_dir).ok())
@@ -141,13 +133,53 @@ pub fn restore_backup(
     crate::path::ensure_no_symlink_components(backup_root)?;
     let backup_dir = crate::path::resolve_safe_path(backup_root, &rel.to_string_lossy())?;
     if let Some(path) = find_newest(&backup_dir) {
-        return do_restore(&path);
+        return Ok(Some(path));
     }
 
     let parent = target_path.parent().unwrap_or(Path::new("."));
-    if let Some(path) = find_newest(parent) {
-        return do_restore(&path);
-    }
+    Ok(find_newest(parent))
+}
 
-    Ok(false)
+fn replace_with_backup(backup_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+    crate::path::ensure_parent_dir(target_path)?;
+    if target_path.exists() {
+        std::fs::remove_file(target_path)?;
+    }
+    if std::fs::rename(backup_path, target_path).is_err() {
+        std::fs::copy(backup_path, target_path)?;
+        std::fs::remove_file(backup_path)?;
+    }
+    Ok(())
+}
+
+pub fn restore_backup(
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<bool> {
+    let Some(backup_path) = find_backup(target_path, base_dir, backup_root)? else {
+        return Ok(false);
+    };
+    replace_with_backup(&backup_path, target_path)?;
+    Ok(true)
+}
+
+/// 复制方式恢复备份：备份文件保留在原处。
+///
+/// 用于 rollback 的可重入恢复：中途失败后再次运行时，preflight 仍可
+/// 通过与备份内容比对判定该条目「已恢复完成」，而不是被卡死。
+pub fn restore_backup_copy(
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<bool> {
+    let Some(backup_path) = find_backup(target_path, base_dir, backup_root)? else {
+        return Ok(false);
+    };
+    crate::path::ensure_parent_dir(target_path)?;
+    if target_path.exists() {
+        std::fs::remove_file(target_path)?;
+    }
+    std::fs::copy(&backup_path, target_path)?;
+    Ok(true)
 }

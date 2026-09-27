@@ -117,6 +117,7 @@
   "journal.removed": "  [rollback] removed: {0}",
   "journal.recreated-dir": "  [rollback] recreated dir: {0}",
   "journal.rollback-complete": "  [rollback] All changes have been undone.",
+  "journal.rollback-failed": "  [rollback] {0} item(s) failed to restore; the apply journal was kept so recovery can be retried.",
   "apply.marker-created": "Patch applied. Apply identifier: {0} (patch directory: {1})",
   "apply.output-generated": "Output file '{0}' has been generated.",
   "rollback.summary": "Detected rollback content: changed {0}, added {1}, deleted {2}",
