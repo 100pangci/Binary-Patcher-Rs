@@ -36,6 +36,8 @@ enum JournalEntrySer {
         source: String,
         target: String,
         target_had_backup: bool,
+        #[serde(default)]
+        delete_source: bool,
     },
 }
 
@@ -58,6 +60,7 @@ enum JournalEntry {
         source: PathBuf,
         target: PathBuf,
         target_had_backup: bool,
+        delete_source: bool,
     },
 }
 
@@ -107,10 +110,12 @@ impl ChangeJournal {
                     source,
                     target,
                     target_had_backup,
+                    delete_source,
                 } => JournalEntrySer::RenamedPatched {
                     source: rel_path_of(&self.base_dir, source),
                     target: rel_path_of(&self.base_dir, target),
                     target_had_backup: *target_had_backup,
+                    delete_source: *delete_source,
                 },
             })
             .collect();
@@ -163,11 +168,11 @@ impl ChangeJournal {
                     }
                 }
                 JournalEntry::RenamedPatched {
+                    source,
                     target,
                     target_had_backup,
-                    ..
+                    delete_source,
                 } => {
-                    // 映射补丁不修改源文件，回滚只需撤销 target。
                     // target_had_backup 为 false 时 target 是本次 patch 的产物，直接删除；
                     // 为 true 时 target 在应用前已存在，必须从备份恢复原文件。
                     if *target_had_backup {
@@ -184,6 +189,15 @@ impl ChangeJournal {
                         }
                         if let Some(parent) = target.parent() {
                             let _ = cleanup_empty_dirs(parent, &self.base_dir);
+                        }
+                    }
+                    // delete_source=false 时源文件从未改动；true 时已在校验成功后删除，
+                    // 必须从删除前落盘的备份恢复。
+                    if *delete_source {
+                        if let Err(e) = restore_backup(source, &self.base_dir, &self.backup_root) {
+                            eprintln!("{}", t!("journal.error", source.display(), e));
+                        } else {
+                            println!("{}", t!("journal.restored", source.display()));
                         }
                     }
                 }
@@ -224,10 +238,12 @@ fn load_journal(journal_path: &Path, base_dir: &Path) -> anyhow::Result<Vec<Jour
                 source,
                 target,
                 target_had_backup,
+                delete_source,
             } => Ok(JournalEntry::RenamedPatched {
                 source: resolve_safe_path(base_dir, &source)?,
                 target: resolve_safe_path(base_dir, &target)?,
                 target_had_backup,
+                delete_source,
             }),
         })
         .collect()
@@ -331,6 +347,12 @@ pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> 
         anyhow::bail!("{}", t!("apply.no-patch-dir", patch_dir.display()));
     }
     crate::patch::validate_patch_dir(base_dir, patch_dir)?;
+
+    // 已成功应用过的补丁拒绝重复应用：mapping source 保持不变的语义下，
+    // 再次 apply 会把第一次生成的目标再次备份，破坏 rollback 语义。
+    if let Some(marker) = crate::patch::load_applied_marker(patch_dir)? {
+        anyhow::bail!("{}", t!("apply.already-applied", marker.apply_id));
+    }
 
     let manifest = Manifest::load(patch_dir)?;
     let backup_root = checked_backup_root_dir(patch_dir)?;
@@ -501,10 +523,14 @@ fn apply_changed_files(
     Ok(())
 }
 
-/// 应用映射补丁：source 仅作为差分输入，**绝不修改、备份或删除**。
+/// 应用映射补丁：source 作为差分输入。
+///
+/// - `delete_source=false`（默认）：source 只读，apply 后继续保留；
+/// - `delete_source=true`：在 target 成功生成并通过 SHA256 校验后删除 source，
+///   删除前必须先把 source 备份到补丁目录，供失败回滚与 rollback 恢复。
 ///
 /// 目标路径可能已存在（例如 `Old/` 中已有同名文件，或用户目录里本来就有），
-/// 此时先备份再覆盖；回滚时删除/恢复目标，源文件始终原样保留。
+/// 此时先备份再覆盖；回滚时删除/恢复目标。
 fn apply_renamed_change(
     base_dir: &Path,
     patch_file: &Path,
@@ -518,10 +544,17 @@ fn apply_renamed_change(
         "{}",
         t!("apply.renamed-changed", item.old_relative_path(), item.path)
     );
-    println!(
-        "{}",
-        t!("apply.rename-source-kept", item.old_relative_path())
-    );
+    if item.delete_source {
+        println!(
+            "{}",
+            t!("apply.rename-source-delete", item.old_relative_path())
+        );
+    } else {
+        println!(
+            "{}",
+            t!("apply.rename-source-kept", item.old_relative_path())
+        );
+    }
 
     let target_had_backup = if target_path.exists() {
         let target_backup_name = create_backup(target_path, base_dir, &journal.backup_root)?
@@ -533,10 +566,21 @@ fn apply_renamed_change(
         false
     };
 
+    // delete_source=true 时先落盘 source 备份，再写 journal：
+    // 无论之后在哪一步中断，rollback 都能恢复 source。
+    if item.delete_source {
+        let source_backup = write_backup(&old_data, source_path, base_dir, &journal.backup_root)?;
+        let source_backup_name = source_backup
+            .file_name()
+            .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
+        println!("{}", t!("apply.backed-up", source_backup_name));
+    }
+
     journal.push(JournalEntry::RenamedPatched {
         source: source_path.to_path_buf(),
         target: target_path.to_path_buf(),
         target_had_backup,
+        delete_source: item.delete_source,
     })?;
 
     let patch_data = std::fs::read(patch_file)
@@ -548,13 +592,22 @@ fn apply_renamed_change(
 
     let new_hash = sha256_of_bytes(&new_data);
     if new_hash != item.new_sha256 {
-        // 只撤销 target；源文件始终未被改动。
+        // 撤销 target；source 此时尚未删除，保持原样。
         if target_had_backup {
             let _ = restore_backup(target_path, base_dir, &journal.backup_root);
         } else if target_path.exists() {
             let _ = std::fs::remove_file(target_path);
         }
         anyhow::bail!("{}", t!("apply.sha256-fail-auto-restore", item.path));
+    }
+
+    // 只有 target 生成并校验成功后才允许删除 source。
+    if item.delete_source {
+        std::fs::remove_file(source_path)?;
+        println!(
+            "{}",
+            t!("apply.rename-source-deleted", item.old_relative_path())
+        );
     }
 
     Ok(())

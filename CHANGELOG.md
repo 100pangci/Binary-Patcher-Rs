@@ -1,5 +1,22 @@
 # Changelog
 
+## [v1.4.0] — 2026-09-27
+
+### Added
+- **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 是**保持不变的差分基础文件**，为 target 生成二进制差分而非「删除 + 新增」；source 永不修改/删除，apply / rollback / journal 只操作 target
+- 映射严格校验：空路径、`old == new`、重复 old/new、链式映射（A→B 且 B→C）全部拒绝；文件存在性、`../`、绝对路径、符号链接防护复用现有安全机制
+- 每条映射可选 `delete_source`（默认 `false`）：为 `true` 时在目标生成并通过 SHA256 校验后删除源文件（删除前先备份，rollback 可恢复）
+- 映射路径「比较键」机制：统一 `\`、移除 `.`、折叠重复分隔符，Windows 下大小写不敏感（仅用于比较，实际访问路径保留原始大小写）
+- 扫描阶段检测映射源在 `New` 中内容变化（`Old/data/package.bin != New/data/package.bin`）时直接报错，不再静默忽略
+- 保留的映射源目录链受保护（`protected_dirs`），跨目录映射 `Old/data/package.bin -> New/localized/package_v2.dat` 不会把 `data/` 加入 `deleted_dirs` 而误删 source
+- 已成功应用过的补丁拒绝重复 apply（复用 `.applied_patch.json` 合法性校验），提示先运行 rollback
+- 新增 `tests/unit_file_map.rs` 与 `tests/workflow_mapping.rs`；README（中/英/日）、i18n（中/英/日）与 `e2e.ps1` / `e2e.sh` 映射冒烟测试同步
+
+### Changed
+- **Manifest format 升至 1.4.0**：`ChangedEntry` 增加可选字段 `source_path`。旧 manifest 无该字段时按普通条目正常读取；1.3.x 工具读取 1.4.x manifest 会进入版本不兼容警告/拒绝路径，不会按旧语义静默执行
+- 文件映射的 apply/rollback 语义：默认 `delete_source=false` 时 source 保留、target 单独生成、rollback 只撤销/恢复 target；`delete_source=true` 时 source 仅在目标校验成功后删除，rollback 会从备份恢复 source
+- apply 结果满足 `apply(Old) == New` 不变量：`New/` 中保留的映射源同名文件保持不变，不再被全量复制为「新增」
+
 ## [v1.3.1] — 2026-09-09
 
 ### Added

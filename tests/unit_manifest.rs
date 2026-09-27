@@ -13,6 +13,7 @@ fn test_valid_manifest() {
         changed: vec![binary_patcher::manifest::ChangedEntry {
             path: "a.txt".to_string(),
             source_path: None,
+            delete_source: false,
             old_sha256: "a".repeat(64),
             new_sha256: "b".repeat(64),
             patch_file: "a.txt.patch".to_string(),
@@ -58,6 +59,7 @@ fn test_manifest_rejects_traversal_in_changed_path() {
         changed: vec![binary_patcher::manifest::ChangedEntry {
             path: "../escape.txt".to_string(),
             source_path: None,
+            delete_source: false,
             old_sha256: "a".repeat(64),
             new_sha256: "b".repeat(64),
             patch_file: "p.patch".to_string(),
@@ -225,6 +227,7 @@ fn test_changed_entry_serde_source_path() {
     let normal = binary_patcher::manifest::ChangedEntry {
         path: "data/foo.pak".to_string(),
         source_path: None,
+        delete_source: false,
         old_sha256: "a".repeat(64),
         new_sha256: "b".repeat(64),
         patch_file: "data/foo.pak.patch".to_string(),
@@ -234,21 +237,61 @@ fn test_changed_entry_serde_source_path() {
         !json.contains("source_path"),
         "normal entry must not serialize source_path: {json}"
     );
+    assert!(
+        !json.contains("delete_source"),
+        "normal entry must not serialize delete_source: {json}"
+    );
 
     let renamed = binary_patcher::manifest::ChangedEntry {
         path: "data/foo.chs".to_string(),
         source_path: Some("data/foo.pak".to_string()),
+        delete_source: true,
         old_sha256: "a".repeat(64),
         new_sha256: "b".repeat(64),
         patch_file: "data/foo.chs.patch".to_string(),
     };
     let json = serde_json::to_string(&renamed).unwrap();
     assert!(json.contains("\"source_path\":\"data/foo.pak\""), "{json}");
+    assert!(json.contains("\"delete_source\":true"), "{json}");
     assert!(renamed.is_renamed());
     assert_eq!(renamed.old_relative_path(), "data/foo.pak");
 
     let parsed: binary_patcher::manifest::ChangedEntry = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.source_path.as_deref(), Some("data/foo.pak"));
+    assert!(parsed.delete_source);
+
+    // delete_source 缺省按 false 读取（兼容旧 manifest）。
+    let legacy: binary_patcher::manifest::ChangedEntry = serde_json::from_str(
+        r#"{"path":"a.chs","source_path":"a.pak","old_sha256":"aa","new_sha256":"bb","patch_file":"a.chs.patch"}"#,
+    )
+    .unwrap();
+    assert!(!legacy.delete_source);
+}
+
+#[test]
+fn test_manifest_rejects_delete_source_without_source_path() {
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "a.txt".to_string(),
+            source_path: None,
+            delete_source: true,
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "a.txt.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    let err = manifest.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("manifest.changed-delete-source-without-source"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -260,6 +303,7 @@ fn test_manifest_rejects_empty_source_path() {
         changed: vec![binary_patcher::manifest::ChangedEntry {
             path: "a.txt".to_string(),
             source_path: Some(String::new()),
+            delete_source: false,
             old_sha256: "a".repeat(64),
             new_sha256: "b".repeat(64),
             patch_file: "a.txt.patch".to_string(),
@@ -276,6 +320,7 @@ fn test_manifest_rejects_duplicate_patch_resource() {
     let entry = |path: &str| binary_patcher::manifest::ChangedEntry {
         path: path.to_string(),
         source_path: None,
+        delete_source: false,
         old_sha256: "a".repeat(64),
         new_sha256: "b".repeat(64),
         patch_file: "same.patch".to_string(),
@@ -290,4 +335,31 @@ fn test_manifest_rejects_duplicate_patch_resource() {
         deleted_dirs: vec![],
     };
     assert!(manifest.validate().is_err());
+}
+
+// ===========================================================================
+// Mapping schema version guard
+// ===========================================================================
+
+#[test]
+fn test_version_compat_rejects_pre_mapping_version() {
+    // 1.3.x 工具不认识 source_path / delete_source 语义，必须判为不兼容，
+    // 不允许静默按旧语义执行。当前工具为 1.4.x。
+    match binary_patcher::manifest::check_version_compat("1.3.1") {
+        binary_patcher::manifest::VersionCompat::Incompatible { .. } => {}
+        binary_patcher::manifest::VersionCompat::Compatible => {
+            panic!("1.3.x manifests must be incompatible with the mapping-aware tool")
+        }
+    }
+}
+
+#[test]
+fn test_current_manifest_version_matches_crate_version() {
+    let manifest = Manifest::default();
+    assert_eq!(manifest.format, env!("CARGO_PKG_VERSION"));
+    assert!(
+        manifest.format.starts_with("1.4."),
+        "mapping schema requires a minor bump to 1.4.0, got {}",
+        manifest.format
+    );
 }

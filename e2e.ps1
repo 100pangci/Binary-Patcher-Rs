@@ -147,38 +147,41 @@ $tm = "$ws\map"
 New-Item -ItemType Directory -Path "$tm\Old\data" -Force | Out-Null
 New-Item -ItemType Directory -Path "$tm\New\data" -Force | Out-Null
 $mold = RandBytes 4096
-WriteBin "$tm\Old\data\script.pak" $mold
+WriteBin "$tm\Old\data\package.bin" $mold
 $mnew = [byte[]]::new($mold.Length)
 [Array]::Copy($mold, $mnew, $mold.Length)
 $mdiff = RandBytes 128
 for ($i = 0; $i -lt 128; $i++) { $mnew[64 + $i] = $mdiff[$i] }
-WriteBin "$tm\New\data\script.chs" $mnew
+WriteBin "$tm\New\data\package_v2.dat" $mnew
 @'
 {
   "mappings": [
-    { "old": "data/script.pak", "new": "data/script.chs" }
+    { "old": "data/package.bin", "new": "data/package_v2.dat" }
   ]
 }
 '@ | Out-File "$tm\file-map.json" -Encoding UTF8
 $null = "`n" | & $bp bundle --base-dir $tm 2>&1
 $mmanifest = if (Test-Path "$tm\Patch\manifest.json") { Get-Content "$tm\Patch\manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
 $mok = $mmanifest -and $mmanifest.changed.Count -eq 1 -and $mmanifest.added.Count -eq 0 -and $mmanifest.deleted.Count -eq 0 `
-    -and $mmanifest.changed[0].path -eq 'data/script.chs' -and $mmanifest.changed[0].source_path -eq 'data/script.pak' `
-    -and (Test-Path "$tm\Patch\data\script.chs.patch") -and -not (Test-Path "$tm\Patch\data\script.chs.new")
+    -and $mmanifest.changed[0].path -eq 'data/package_v2.dat' -and $mmanifest.changed[0].source_path -eq 'data/package.bin' `
+    -and (Test-Path "$tm\Patch\data\package_v2.dat.patch") -and -not (Test-Path "$tm\Patch\data\package_v2.dat.new")
 if ($mok) { P '映射 bundle: 生成差分而非新增' } else { F '映射 bundle' }
 
 $mgame = "$ws\map-game"
 New-Item -ItemType Directory -Path "$mgame\data" -Force | Out-Null
-Copy-Item "$tm\Old\data\script.pak" "$mgame\data\script.pak"
+Copy-Item "$tm\Old\data\package.bin" "$mgame\data\package.bin"
 Copy-Item -LiteralPath "$tm\Patch" "$mgame\Patch" -Recurse
 $null = "`n" | & $apply --base-dir $mgame 2>&1
-if ((Test-Path "$mgame\data\script.chs") -and -not (Test-Path "$mgame\data\script.pak") -and (HashFile "$mgame\data\script.chs") -eq (HashFile "$tm\New\data\script.chs")) {
-    P '映射 apply: pak -> chs'
+if ((Test-Path "$mgame\data\package_v2.dat") -and (Test-Path "$mgame\data\package.bin") `
+    -and (HashFile "$mgame\data\package_v2.dat") -eq (HashFile "$tm\New\data\package_v2.dat") `
+    -and (HashFile "$mgame\data\package.bin") -eq (HashFile "$tm\Old\data\package.bin")) {
+    P '映射 apply: 源文件保留 + 目标生成'
 } else { F '映射 apply' }
 
 $null = "y`n`n" | & $roll --base-dir $mgame 2>&1
-if ((Test-Path "$mgame\data\script.pak") -and -not (Test-Path "$mgame\data\script.chs") -and (HashFile "$mgame\data\script.pak") -eq (HashFile "$tm\Old\data\script.pak")) {
-    P '映射 rollback: 恢复 pak 删除 chs'
+if ((Test-Path "$mgame\data\package.bin") -and -not (Test-Path "$mgame\data\package_v2.dat") `
+    -and (HashFile "$mgame\data\package.bin") -eq (HashFile "$tm\Old\data\package.bin")) {
+    P '映射 rollback: 撤销目标、源文件不变'
 } else { F '映射 rollback' }
 
 # ============================================================

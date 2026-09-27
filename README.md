@@ -153,19 +153,19 @@ binary_patcher bundle --base-dir . --patch-name v1.4.0
 
 ### 4. 文件名映射（rename-aware diff）
 
-有些汉化或重构会在修改内容的同时修改文件名（例如扩展名从 `.pak` 变为 `.chs`）。
-默认情况下程序会把它们识别为「删除旧文件 + 新增新文件」，新文件会被完整复制进补丁包。
-如果希望程序把两个不同路径当作同一个逻辑文件来生成二进制差分，可以在工作目录根目录
-放置可选的 `file-map.json`，手动声明映射关系：
+当同一个逻辑文件在旧版本和新版本中使用不同的文件名或扩展名时，默认行为会把它们识别为
+「删除旧文件 + 新增新文件」，新文件会被完整复制进补丁包。如果希望程序把两个不同路径当作
+同一个逻辑文件来生成二进制差分，可以在工作目录根目录放置可选的 `file-map.json`，
+手动声明映射关系：
 
 ```text
 Old/
 └── data/
-    └── script.pak
+    └── package.bin
 
 New/
 └── data/
-    └── script.chs
+    └── package_v2.dat
 
 file-map.json
 ```
@@ -174,34 +174,65 @@ file-map.json
 {
   "mappings": [
     {
-      "old": "data/script.pak",
-      "new": "data/script.chs"
+      "old": "data/package.bin",
+      "new": "data/package_v2.dat"
     }
   ]
 }
 ```
 
 这会让 Binary Patcher 将两个不同路径的文件作为同一个逻辑文件进行二进制差分，
-而不是把旧文件识别为删除、新文件识别为新增。生成的清单条目形如：
+而不是把旧文件识别为删除、新文件识别为新增。
+
+> 文件映射只指定**差分基础文件**，源文件默认会保留，并不是破坏性的文件重命名。
+> （mapping source is preserved; this is a cross-name diff base mapping, not a
+> destructive filesystem rename.）
+
+生成的清单条目形如：
 
 ```json
 {
-  "path": "data/script.chs",
-  "source_path": "data/script.pak",
+  "path": "data/package_v2.dat",
+  "source_path": "data/package.bin",
   "old_sha256": "...",
   "new_sha256": "...",
-  "patch_file": "data/script.chs.patch"
+  "patch_file": "data/package_v2.dat.patch"
 }
 ```
 
+默认情况下（`delete_source: false`）：
+
 - 应用补丁时：映射源文件只作为差分输入，**保持不变**（不备份、不修改、不删除）；目标文件由差分生成（若目标已存在，先备份再覆盖），校验 SHA256。
 - 回滚时：删除目标文件；如果应用前目标文件已存在，则恢复其原内容。源文件始终不受影响。
-- 映射涉及的源/目标路径会从普通扫描中**整体排除**：`New/` 中保留的映射源同名文件（例如 `grp.aos`）视为保持不变，不会作为新增文件全量复制进补丁包，应用后也仍然存在。
+- 映射涉及的源/目标路径会从普通扫描中**整体排除**：`New/` 中保留的映射源同名文件视为保持不变，不会作为新增文件全量复制进补丁包，应用后也仍然存在。
+
+如果确实需要在应用成功后删除源文件（传统重命名效果），可以对该映射显式设置：
+
+```json
+{
+  "mappings": [
+    {
+      "old": "data/package.bin",
+      "new": "data/package_v2.dat",
+      "delete_source": true
+    }
+  ]
+}
+```
+
+- `delete_source: true` 时，Apply 先用源文件完成差分并校验目标 SHA256，**确认成功后才删除源文件**；删除前源文件会先备份，失败自动回滚与 rollback 都能完整恢复。
+- `delete_source: true` 要求 `New/` 中不存在同名源文件（否则应用结果无法与 `New/` 一致，扫描阶段直接报错）。
+- 缺省或未指定时按 `false` 处理，兼容旧 `file-map.json` 与旧 manifest。
+- 普通同路径变更条目不允许 `delete_source: true`。
+
+其他规则：
+
 - 如果映射目标在 `Old/` 中已存在，其内容会被映射结果覆盖（应用前先备份，回滚时恢复），不会被误判为删除。
 - 内容完全相同、仅文件名不同的情况同样支持（生成最小差分补丁）。
 - 映射**不会自动猜测**，必须由用户明确指定：程序不会根据文件名、扩展名、大小或哈希推断关系。
-- 路径相对于 `Old/` 和 `New/`，统一使用 `/` 分隔符（Windows 的 `\` 会自动规范化）。
-- 校验严格：旧/新文件必须存在；同一个旧文件不能映射到多个新文件，多个旧文件也不能映射到同一个新文件；`old` 与 `new` 相同时会报错并要求删除该条目；不支持链式映射（A→B 且 B→C）。
+- 路径相对于 `Old/` 和 `New/`，统一使用 `/` 分隔符（Windows 的 `\` 会自动规范化；`./` 与重复分隔符会被折叠）。
+- 校验严格：旧/新文件必须存在；同一个旧文件不能映射到多个新文件，多个旧文件也不能映射到同一个新文件；`old` 与 `new` 相同（含规范化后相同、Windows 下仅大小写不同）会报错并要求删除该条目；不支持链式映射（A→B 且 B→C）。
+- 如果 `New/` 中存在映射源同名文件，其内容必须与 `Old/` 完全一致，否则报错（映射源是保持不变的差分基础文件）。
 - 路径安全复用现有机制：拒绝 `../`、绝对路径、符号链接与路径逃逸。
 - 不存在 `file-map.json` 时，行为与旧版本完全一致（opt-in 功能）。
 

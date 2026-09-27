@@ -38,8 +38,129 @@ fn test_load_file_map_normalizes_backslashes() {
 
     let file_map = load_file_map(root.path()).unwrap().unwrap();
     assert_eq!(file_map.mappings.len(), 1);
-    assert_eq!(file_map.mappings[0].old_path(), "data/a.pak");
-    assert_eq!(file_map.mappings[0].new_path(), "data/a.chs");
+    assert_eq!(
+        file_map.mappings[0].old_path().unwrap().relative(),
+        "data/a.pak"
+    );
+    assert_eq!(
+        file_map.mappings[0].new_path().unwrap().relative(),
+        "data/a.chs"
+    );
+}
+
+#[test]
+fn test_normalize_mapping_path_cleans_dots_and_separators() {
+    let path = binary_patcher::file_map::normalize_mapping_path("./data//sub/a.pak").unwrap();
+    assert_eq!(path.relative(), "data/sub/a.pak");
+    assert_eq!(
+        binary_patcher::file_map::normalize_mapping_path(r".\data\sub\a.pak")
+            .unwrap()
+            .relative(),
+        "data/sub/a.pak"
+    );
+}
+
+#[test]
+fn test_normalize_mapping_path_rejects_dotdot() {
+    let err = binary_patcher::file_map::normalize_mapping_path("data/../a.pak").unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.parent-dir"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_normalize_mapping_path_rejects_absolute() {
+    let err = binary_patcher::file_map::normalize_mapping_path("/etc/passwd").unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.absolute"),
+        "unexpected error: {err}"
+    );
+    let err = binary_patcher::file_map::normalize_mapping_path(r"C:\Windows\system32").unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.absolute"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_validate_rejects_dot_variant_same_path() {
+    let (root, old_dir, new_dir) = workspace();
+    std::fs::create_dir_all(old_dir.join("data")).unwrap();
+    std::fs::create_dir_all(new_dir.join("data")).unwrap();
+    std::fs::write(old_dir.join("data/foo.aos"), b"a").unwrap();
+    std::fs::write(new_dir.join("data/foo.aos"), b"b").unwrap();
+    write_file_map(root.path(), "./data/foo.aos", "data/foo.aos");
+
+    let file_map = load_file_map(root.path()).unwrap().unwrap();
+    let err = validate_file_map(&file_map, &old_dir, &new_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.same-path"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_validate_rejects_duplicate_old_with_normalization_variants() {
+    let (root, old_dir, new_dir) = workspace();
+    std::fs::create_dir_all(old_dir.join("data")).unwrap();
+    std::fs::create_dir_all(new_dir.join("data")).unwrap();
+    std::fs::write(old_dir.join("data/a.pak"), b"a").unwrap();
+    std::fs::write(new_dir.join("data/a.chs"), b"b").unwrap();
+    std::fs::write(new_dir.join("data/b.chs"), b"c").unwrap();
+    let map = serde_json::json!({
+        "mappings": [
+            { "old": "data//a.pak", "new": "data/a.chs" },
+            { "old": "data/a.pak", "new": "data/b.chs" }
+        ]
+    });
+    std::fs::write(root.path().join("file-map.json"), map.to_string()).unwrap();
+
+    let file_map = load_file_map(root.path()).unwrap().unwrap();
+    let err = validate_file_map(&file_map, &old_dir, &new_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.duplicate-old"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_validate_rejects_chain_with_normalization_variants() {
+    let (root, old_dir, new_dir) = workspace();
+    std::fs::write(old_dir.join("a.pak"), b"a").unwrap();
+    std::fs::write(old_dir.join("b.pak"), b"b").unwrap();
+    std::fs::write(new_dir.join("b.pak"), b"x").unwrap();
+    std::fs::write(new_dir.join("c.chs"), b"c").unwrap();
+    let map = serde_json::json!({
+        "mappings": [
+            { "old": "a.pak", "new": "b.pak" },
+            { "old": "./b.pak", "new": "c.chs" }
+        ]
+    });
+    std::fs::write(root.path().join("file-map.json"), map.to_string()).unwrap();
+
+    let file_map = load_file_map(root.path()).unwrap().unwrap();
+    let err = validate_file_map(&file_map, &old_dir, &new_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.chained"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_validate_rejects_case_variant_same_path_on_windows() {
+    let (root, old_dir, new_dir) = workspace();
+    std::fs::write(old_dir.join("foo.aos"), b"a").unwrap();
+    std::fs::write(new_dir.join("foo.aos"), b"b").unwrap();
+    write_file_map(root.path(), "Foo.aos", "foo.aos");
+
+    let file_map = load_file_map(root.path()).unwrap().unwrap();
+    let err = validate_file_map(&file_map, &old_dir, &new_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.same-path"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -193,6 +314,7 @@ fn test_validate_rejects_empty_paths() {
         mappings: vec![FileMapping {
             old: String::new(),
             new: "a.chs".to_string(),
+            delete_source: false,
         }],
     };
     assert!(validate_file_map(&empty_old, &old_dir, &new_dir).is_err());
@@ -201,6 +323,7 @@ fn test_validate_rejects_empty_paths() {
         mappings: vec![FileMapping {
             old: "a.pak".to_string(),
             new: String::new(),
+            delete_source: false,
         }],
     };
     assert!(validate_file_map(&empty_new, &old_dir, &new_dir).is_err());

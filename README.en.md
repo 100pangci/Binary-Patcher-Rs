@@ -118,20 +118,20 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 
 ### 4. File-name mappings (rename-aware diff)
 
-Some localization or refactoring work also changes file names (for example, an extension
-changes from `.pak` to `.chs`). By default the tool treats those as "delete the old file +
-add the new file", and the new file is copied in full into the patch bundle. To make the
-tool treat two different paths as the same logical file and produce a binary diff instead,
-place an optional `file-map.json` in the workspace root and declare the mapping explicitly:
+When the same logical file uses a different name or extension in the old and new versions,
+the default behavior treats it as "delete the old file + add the new file", and the new file
+is copied in full into the patch bundle. To make the tool treat two different paths as the
+same logical file and produce a binary diff instead, place an optional `file-map.json` in the
+workspace root and declare the mapping explicitly:
 
 ```text
 Old/
 └── data/
-    └── script.pak
+    └── package.bin
 
 New/
 └── data/
-    └── script.chs
+    └── package_v2.dat
 
 file-map.json
 ```
@@ -140,25 +140,33 @@ file-map.json
 {
   "mappings": [
     {
-      "old": "data/script.pak",
-      "new": "data/script.chs"
+      "old": "data/package.bin",
+      "new": "data/package_v2.dat"
     }
   ]
 }
 ```
 
 This makes Binary Patcher diff the two paths as one logical file rather than reporting the
-old file as deleted and the new file as added. The generated manifest entry looks like:
+old file as deleted and the new file as added.
+
+> A mapping only designates an **unchanged diff base file**; the source is preserved by
+> default. This is a cross-name diff base mapping, not a destructive filesystem rename.
+> （文件映射只指定差分基础文件，源文件默认会保留，并不是破坏性的文件重命名。）
+
+The generated manifest entry looks like:
 
 ```json
 {
-  "path": "data/script.chs",
-  "source_path": "data/script.pak",
+  "path": "data/package_v2.dat",
+  "source_path": "data/package.bin",
   "old_sha256": "...",
   "new_sha256": "...",
-  "patch_file": "data/script.chs.patch"
+  "patch_file": "data/package_v2.dat.patch"
 }
 ```
+
+With the default `delete_source: false`:
 
 - On apply: the mapping source is used **only as the diff input and is never modified,
   backed up or deleted**; the target is produced from the diff (an existing target is backed
@@ -166,17 +174,48 @@ old file as deleted and the new file as added. The generated manifest entry look
 - On rollback: the target is removed, or its original content restored if it existed before
   apply. The source file is always left untouched.
 - Mapped source/target paths are **excluded entirely** from the ordinary scan: a mapping-source
-  file that remains in `New/` (for example `grp.aos`) is treated as unchanged, is never copied
-  in full as an added file, and still exists after apply.
+  file that remains in `New/` is treated as unchanged, is never copied in full as an added
+  file, and still exists after apply.
+
+To remove the source after a successful apply (classic rename behavior), set the flag on the
+mapping explicitly:
+
+```json
+{
+  "mappings": [
+    {
+      "old": "data/package.bin",
+      "new": "data/package_v2.dat",
+      "delete_source": true
+    }
+  ]
+}
+```
+
+- With `delete_source: true`, apply generates the target from the diff and verifies its
+  SHA256 first; **the source is deleted only after verification succeeds**. The source is
+  backed up before deletion, so auto-rollback and rollback_patch can always restore it.
+- `delete_source: true` requires that `New/` does not contain the same source path (otherwise
+  the applied result could not match `New/`; the bundle fails with an error).
+- Missing or omitted `delete_source` is treated as `false`, compatible with old
+  `file-map.json` files and old manifests.
+- Plain same-path changed entries cannot use `delete_source: true`.
+
+Other rules:
+
 - If the mapping target already exists in `Old/`, its content is overwritten by the mapping
   result (backed up before apply, restored on rollback) instead of being misreported as deleted.
 - Identical content with only a different name is supported too (a minimal diff patch is generated).
 - Mappings are **never guessed**: the tool does not infer them from file names, extensions,
   sizes or hashes.
-- Paths are relative to `Old/` and `New/`, using `/` separators (Windows `\` is normalized).
+- Paths are relative to `Old/` and `New/`, using `/` separators (Windows `\` is normalized;
+  `./` and repeated separators are folded).
 - Validation is strict: both files must exist; one old file cannot map to multiple new files
-  and multiple old files cannot map to one new file; `old == new` is rejected with a hint to
-  remove the entry; chained mappings (A→B and B→C) are rejected.
+  and multiple old files cannot map to one new file; `old == new` (including after
+  normalization, or case-only differences on Windows) is rejected with a hint to remove the
+  entry; chained mappings (A→B and B→C) are rejected.
+- If `New/` contains a file with the same path as a mapping source, its content must be
+  identical to `Old/`, otherwise the bundle fails (a mapping source is an unchanged diff base).
 - Path safety reuses the existing checks: `../`, absolute paths, symlinks and escapes are rejected.
 - Without `file-map.json`, behavior is exactly the same as before (opt-in).
 

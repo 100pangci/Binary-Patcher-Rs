@@ -19,9 +19,19 @@ pub struct ChangedEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
 
+    /// 应用成功后是否删除映射源文件。仅对显式映射有效，缺省 `false`。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub delete_source: bool,
+
     pub old_sha256: String,
     pub new_sha256: String,
     pub patch_file: String,
+}
+
+// serde 的 skip_serializing_if 要求接收引用，签名无法改为按值传递。
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ChangedEntry {
@@ -173,6 +183,12 @@ impl Manifest {
             }
             if item.source_path.as_deref().is_some_and(str::is_empty) {
                 anyhow::bail!("{}", t!("manifest.changed-source-path-empty", idx));
+            }
+            if item.delete_source && !item.is_renamed() {
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.changed-delete-source-without-source", idx)
+                );
             }
             if item.old_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-old-sha", idx));

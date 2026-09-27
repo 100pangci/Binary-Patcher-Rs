@@ -67,11 +67,45 @@ pub fn build_patch_bundle_with_name(
 
     println!("{}", t!("bundle.scanning"));
 
-    // Step 1: 先处理显式映射，生成 rename-aware diff。
+    // Step 1: 先处理显式映射，生成 mapping-aware diff。
     let mappings = resolve_mappings(&file_map, &old_files, &new_files)?;
     let mut mapped_old: BTreeSet<String> = BTreeSet::new();
     let mut mapped_new: BTreeSet<String> = BTreeSet::new();
-    for (old_rel, new_rel) in &mappings {
+    for mapping in &mappings {
+        mapped_old.insert(mapping.old_rel.clone());
+        mapped_new.insert(mapping.new_rel.clone());
+    }
+
+    // 映射源是「保持不变的差分基础文件」（delete_source=false 时）：
+    // - New 中存在同名源文件 → 内容必须与 Old 一致（delete_source=false），
+    //   或必须不存在（delete_source=true，否则 apply 后无法与 New 一致）。
+    for mapping in &mappings {
+        let old_rel = &mapping.old_rel;
+        let Some(new_source) = new_files.get(old_rel) else {
+            continue;
+        };
+        if mapping.delete_source {
+            anyhow::bail!(
+                "{}",
+                t!("filemap.source-present-with-delete-source", old_rel)
+            );
+        }
+        let old_source = old_files
+            .get(old_rel)
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", old_rel)))?;
+        if sha256_of_file(old_source)? != sha256_of_file(new_source)? {
+            anyhow::bail!("{}", t!("filemap.source-modified-in-new", old_rel));
+        }
+        println!("{}", t!("bundle.mapping-source-leftover", old_rel));
+    }
+
+    // 保留的映射源所在目录及其全部祖先目录必须保留：
+    // delete_source=true 的源会被删除，其目录允许进入 deleted_dirs。
+    let protected_dirs = protected_dirs_of(&mappings);
+
+    for mapping in &mappings {
+        let old_rel = &mapping.old_rel;
+        let new_rel = &mapping.new_rel;
         let old_file = old_files
             .get(old_rel)
             .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", old_rel)))?;
@@ -79,9 +113,10 @@ pub fn build_patch_bundle_with_name(
             .get(new_rel)
             .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", new_rel)))?;
 
-        mapped_old.insert(old_rel.clone());
-        mapped_new.insert(new_rel.clone());
         println!("{}", t!("bundle.mapping", old_rel, new_rel));
+        if mapping.delete_source {
+            println!("{}", t!("bundle.mapping-delete-source", old_rel));
+        }
 
         let patch_rel = format!("{new_rel}.patch");
         if !patch_resources.insert(patch_rel.clone()) {
@@ -95,18 +130,11 @@ pub fn build_patch_bundle_with_name(
             old_relative_path: old_rel,
             new_relative_path: new_rel,
             renamed: true,
+            delete_source: mapping.delete_source,
         };
         if let Some(entry) = process_changed(&task, fast_format, &mode)? {
             manifest.changed.push(entry);
             changed_count += 1;
-        }
-    }
-
-    // 映射源路径若在 New 中仍存在（准备 New 时未删除旧名文件），
-    // 属于已由映射消费的文件，必须整体忽略；否则会被全量复制为“新增”。
-    for old_rel in &mapped_old {
-        if new_files.contains_key(old_rel) {
-            println!("{}", t!("bundle.mapping-source-leftover", old_rel));
         }
     }
 
@@ -134,6 +162,7 @@ pub fn build_patch_bundle_with_name(
                     old_relative_path: &relative_path,
                     new_relative_path: &relative_path,
                     renamed: false,
+                    delete_source: false,
                 };
                 match process_changed(&task, fast_format, &mode)? {
                     Some(entry) => {
@@ -171,7 +200,9 @@ pub fn build_patch_bundle_with_name(
     }
 
     for rel_path in old_dirs.keys() {
-        if !new_dirs.contains_key(rel_path) {
+        // 映射源的目录链受保护，即使 New 中不存在也不能删除，
+        // 否则 apply 会连保留的 source 一起递归删除。
+        if !new_dirs.contains_key(rel_path) && !protected_dirs.contains(rel_path) {
             manifest.deleted_dirs.push(rel_path.clone());
             println!("{}", t!("bundle.deleted-dir", &rel_path));
             deleted_dirs_count += 1;
@@ -194,6 +225,12 @@ pub fn build_patch_bundle_with_name(
     Ok(())
 }
 
+struct ResolvedMapping {
+    old_rel: String,
+    new_rel: String,
+    delete_source: bool,
+}
+
 /// 将 file-map.json 中的用户路径解析为实际扫描到的相对路径。
 ///
 /// 完全匹配优先；Windows 文件系统大小写不敏感，因此额外做一次
@@ -202,17 +239,44 @@ fn resolve_mappings(
     file_map: &FileMap,
     old_files: &BTreeMap<String, PathBuf>,
     new_files: &BTreeMap<String, PathBuf>,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<ResolvedMapping>> {
     let mut mappings = Vec::with_capacity(file_map.mappings.len());
     for mapping in &file_map.mappings {
-        let old_rel = find_scanned_key(old_files, &mapping.old_path())
-            .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", mapping.old_path())))?;
-        let new_rel = find_scanned_key(new_files, &mapping.new_path())
-            .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", mapping.new_path())))?;
-        mappings.push((old_rel, new_rel));
+        let old = mapping.old_path()?;
+        let new = mapping.new_path()?;
+        let old_rel = find_scanned_key(old_files, old.relative())
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", old.relative())))?;
+        let new_rel = find_scanned_key(new_files, new.relative())
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", new.relative())))?;
+        mappings.push(ResolvedMapping {
+            old_rel,
+            new_rel,
+            delete_source: mapping.delete_source,
+        });
     }
-    mappings.sort();
+    mappings.sort_by(|a, b| a.old_rel.cmp(&b.old_rel).then(a.new_rel.cmp(&b.new_rel)));
     Ok(mappings)
+}
+
+/// 保留的映射源（delete_source=false）所在目录及其所有祖先目录，
+/// 这些目录不得进入 deleted_dirs。
+fn protected_dirs_of(mappings: &[ResolvedMapping]) -> BTreeSet<String> {
+    let mut protected = BTreeSet::new();
+    for mapping in mappings {
+        if mapping.delete_source {
+            continue;
+        }
+        let mut current = Path::new(&mapping.old_rel).parent();
+        while let Some(dir) = current {
+            let dir_str = dir.to_string_lossy().replace('\\', "/");
+            if dir_str.is_empty() {
+                break;
+            }
+            protected.insert(dir_str);
+            current = dir.parent();
+        }
+    }
+    protected
 }
 
 fn find_scanned_key(files: &BTreeMap<String, PathBuf>, relative_path: &str) -> Option<String> {
@@ -239,6 +303,7 @@ struct ChangeTask<'a> {
     old_relative_path: &'a str,
     new_relative_path: &'a str,
     renamed: bool,
+    delete_source: bool,
 }
 
 fn process_changed(
@@ -315,6 +380,7 @@ fn process_changed(
     Ok(Some(ChangedEntry {
         path: task.new_relative_path.to_string(),
         source_path: task.renamed.then(|| task.old_relative_path.to_string()),
+        delete_source: task.renamed && task.delete_source,
         old_sha256: old_hash,
         new_sha256: new_hash,
         patch_file: format!("{}.patch", task.new_relative_path),

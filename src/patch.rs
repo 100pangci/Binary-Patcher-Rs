@@ -204,6 +204,14 @@ fn load_marker(patch_dir: &Path) -> anyhow::Result<Option<AppliedPatchMarker>> {
     Ok(Some(marker))
 }
 
+/// 读取并校验补丁目录中的应用标识（若存在）。
+///
+/// 复用与 `rollback_patch` 相同的合法性校验：返回 `Ok(None)` 表示从未成功
+/// 应用；标识存在但无效时返回错误。
+pub fn load_applied_marker(patch_dir: &Path) -> anyhow::Result<Option<AppliedPatchMarker>> {
+    load_marker(patch_dir)
+}
+
 fn marker_candidates(base_dir: &Path) -> anyhow::Result<Vec<PatchCandidate>> {
     let mut candidates = find_named_patch_dirs(base_dir)?;
     let default_path = base_dir.join(DEFAULT_PATCH_DIR_NAME);
