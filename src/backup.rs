@@ -164,10 +164,10 @@ pub fn restore_backup(
     Ok(true)
 }
 
-/// 复制方式恢复备份：备份文件保留在原处。
-///
-/// 用于 rollback 的可重入恢复：中途失败后再次运行时，preflight 仍可
-/// 通过与备份内容比对判定该条目「已恢复完成」，而不是被卡死。
+/// 复制方式恢复备份：备份文件保留在原处，且原 target 只会在临时文件
+/// 完整写入后才被替换。复制或替换失败时原 target 保持不变，临时文件清理；
+/// 备份保留使得中途失败后可以重试，也便于 preflight 通过内容比对判定
+/// 该条目「已恢复完成」。
 pub fn restore_backup_copy(
     target_path: &Path,
     base_dir: &Path,
@@ -177,9 +177,62 @@ pub fn restore_backup_copy(
         return Ok(false);
     };
     crate::path::ensure_parent_dir(target_path)?;
-    if target_path.exists() {
-        std::fs::remove_file(target_path)?;
+
+    // 先把备份复制到 target 同目录的唯一临时文件；任何失败都不能动原 target。
+    let (mut temp_file, temp_path) = open_restore_temp_file(target_path)?;
+    let copy_result = (|| -> anyhow::Result<()> {
+        let mut backup_file = std::fs::File::open(&backup_path)?;
+        std::io::copy(&mut backup_file, &mut temp_file)?;
+        temp_file.sync_all()?;
+        Ok(())
+    })();
+    drop(temp_file);
+    if let Err(error) = copy_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
     }
-    std::fs::copy(&backup_path, target_path)?;
+
+    // 临时文件已完整写入，再用一次 rename 替换 target（Unix 原子覆盖，
+    // Windows 使用 MoveFileEx replace）。替换失败时原 target 仍是原状。
+    if let Err(error) = std::fs::rename(&temp_path, target_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.into());
+    }
     Ok(true)
+}
+
+/// 在 target 同目录创建唯一临时文件，供 [`restore_backup_copy`] 先写后换。
+fn open_restore_temp_file(target_path: &Path) -> anyhow::Result<(std::fs::File, PathBuf)> {
+    let file_name = target_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("{}", t!("backup.invalid-path", target_path.display())))?;
+    let parent = target_path.parent().unwrap_or(Path::new("."));
+
+    let mut retry = 0u32;
+    let max_retries = 10;
+    loop {
+        let temp_path = parent.join(format!(
+            ".{file_name}.restore-{}-{retry}.tmp",
+            std::process::id()
+        ));
+        crate::path::ensure_no_symlink_components(&temp_path)?;
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((file, temp_path)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                retry += 1;
+                if retry >= max_retries {
+                    anyhow::bail!(
+                        "{}",
+                        t!("backup.retry-exhausted", max_retries, temp_path.display())
+                    );
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }

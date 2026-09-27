@@ -1372,6 +1372,98 @@ fn test_journal_partial_recovery_failure_keeps_journal_and_marker() {
 }
 
 #[test]
+fn test_journal_missing_backup_counts_as_failure_and_keeps_journal() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+    let backup_root = game_patch.join(".backup_before_patch");
+    let journal_path = game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    let marker_path = game_patch.join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME);
+
+    // 删掉必要备份：恢复该条目必须失败，绝不能当成功跳过。
+    let backup =
+        binary_patcher::backup::find_backup(&game_dir.join("config.ini"), &game_dir, &backup_root)
+            .unwrap()
+            .expect("config.ini must have a backup after apply");
+    std::fs::remove_file(&backup).unwrap();
+
+    std::fs::write(&journal_path, r#"[{"type":"patched","path":"config.ini"}]"#).unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("journal.rollback-failed"),
+        "unexpected error: {err}"
+    );
+
+    assert!(
+        journal_path.exists(),
+        "missing backup must keep the journal for retry"
+    );
+    assert!(
+        marker_path.exists(),
+        "missing backup must keep the applied marker for retry"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=new\nport=8080\n",
+        "failed restore must leave the target untouched"
+    );
+}
+
+#[test]
+fn test_journal_recovery_keeps_backups_for_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+    let backup_root = game_patch.join(".backup_before_patch");
+    let journal_path = game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    let marker_path = game_patch.join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME);
+
+    // 逆序恢复：missing.txt 无备份先失败，config.ini 随后成功恢复；
+    // 采用保留备份的 copy 方式，config.ini 的备份必须仍在，供重试使用。
+    std::fs::write(
+        &journal_path,
+        r#"[
+            {"type":"patched","path":"config.ini"},
+            {"type":"patched","path":"missing.txt"}
+        ]"#,
+    )
+    .unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("journal.rollback-failed"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n",
+        "successful entries must already be restored"
+    );
+    assert!(
+        binary_patcher::backup::find_backup(&game_dir.join("config.ini"), &game_dir, &backup_root)
+            .unwrap()
+            .is_some(),
+        "journal recovery must keep the backup so the retry can complete"
+    );
+    assert!(journal_path.exists());
+    assert!(marker_path.exists());
+
+    // 处理掉无备份的条目后重试：必须完成并清理 journal 与 marker。
+    std::fs::write(&journal_path, r#"[{"type":"patched","path":"config.ini"}]"#).unwrap();
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert!(!journal_path.exists(), "journal must be removed on success");
+    assert!(!marker_path.exists(), "marker must be cleared on success");
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+}
+
+#[test]
 fn test_named_patch_cli_selection_marker_and_rollback() {
     let root = tempfile::tempdir().unwrap();
     let base_dir = root.path();

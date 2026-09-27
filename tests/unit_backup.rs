@@ -68,6 +68,92 @@ fn test_restore_backup_copy_keeps_backup_and_is_idempotent() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
 }
 
+#[test]
+fn test_restore_backup_copy_failure_keeps_target_and_cleans_temp() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
+    std::fs::create_dir_all(&backup_root).unwrap();
+    let backup_content = "backup content";
+    std::fs::write(
+        backup_root.join("file.txt.backup_before_patch"),
+        backup_content,
+    )
+    .unwrap();
+
+    // 目标被用户换成了非空目录：最终替换必然失败。
+    let target = dir.path().join("file.txt");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("user.txt"), "user data").unwrap();
+
+    let result = binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root);
+    assert!(result.is_err(), "replacing a directory must fail");
+
+    // 复制/替换失败时原 target 必须保持不变，临时文件清理，备份保留用于重试。
+    assert!(target.is_dir(), "original target must stay untouched");
+    assert_eq!(
+        std::fs::read_to_string(target.join("user.txt")).unwrap(),
+        "user data"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".restore-"))
+        .map(|entry| entry.file_name())
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "restore temp files must be cleaned: {leftovers:?}"
+    );
+    assert!(backup_root.join("file.txt.backup_before_patch").exists());
+
+    // 处理掉冲突后重试必须成功。
+    std::fs::remove_dir_all(&target).unwrap();
+    assert!(
+        binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), backup_content);
+}
+
+#[cfg(windows)]
+#[test]
+fn test_restore_backup_copy_locked_target_fails_safely() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // FILE_SHARE_READ：仅允许读共享（不含 FILE_SHARE_DELETE），替换 target 必失败。
+    const FILE_SHARE_READ: u32 = 0x1;
+
+    let dir = tempfile::tempdir().unwrap();
+    let backup_root = dir.path().join("backups");
+    let target = dir.path().join("locked.txt");
+    std::fs::write(&target, "original").unwrap();
+    let backup = binary_patcher::backup::create_backup(&target, dir.path(), &backup_root).unwrap();
+    std::fs::write(&target, "patched").unwrap();
+
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&target)
+        .unwrap();
+
+    let result = binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root);
+    assert!(result.is_err(), "locked target must fail restore");
+
+    drop(lock);
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "patched",
+        "failed restore must leave the original target untouched"
+    );
+    assert!(backup.exists(), "backup must be kept for retry");
+
+    // 解除锁定后重试必须成功。
+    assert!(
+        binary_patcher::backup::restore_backup_copy(&target, dir.path(), &backup_root).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+}
+
 // ===========================================================================
 // Backup retry on name collision
 // ===========================================================================

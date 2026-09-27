@@ -1,5 +1,5 @@
 use crate::backup::{
-    backup_root_dir, checked_backup_root_dir, create_backup, restore_backup, write_backup,
+    backup_root_dir, checked_backup_root_dir, create_backup, restore_backup_copy, write_backup,
 };
 use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
@@ -133,6 +133,9 @@ impl ChangeJournal {
 
     /// 按日志逆序尽力恢复所有条目；任一恢复失败则返回错误。
     /// 调用方在失败时必须保留 journal（与 marker），以便再次运行继续恢复。
+    ///
+    /// 需要恢复备份的条目一律使用保留备份的 copy 方式，且「没找到备份」
+    /// （`Ok(false)`）计为失败，绝不能当成恢复完成。
     fn rollback(&self) -> anyhow::Result<()> {
         let mut failures = 0usize;
         for entry in self.entries.iter().rev() {
@@ -143,7 +146,7 @@ impl ChangeJournal {
                     target,
                     had_backup: true,
                 } => {
-                    if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
+                    if let Err(e) = self.restore_required(target) {
                         eprintln!("{}", t!("journal.error", target.display(), e));
                         failures += 1;
                     } else {
@@ -185,7 +188,7 @@ impl ChangeJournal {
                     // target_had_backup 为 false 时 target 是本次 patch 的产物，直接删除；
                     // 为 true 时 target 在应用前已存在，必须从备份恢复原文件。
                     if *target_had_backup {
-                        if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
+                        if let Err(e) = self.restore_required(target) {
                             eprintln!("{}", t!("journal.error", target.display(), e));
                             failures += 1;
                         } else {
@@ -205,7 +208,7 @@ impl ChangeJournal {
                     // delete_source=false 时源文件从未改动；true 时已在校验成功后删除，
                     // 必须从删除前落盘的备份恢复。
                     if *delete_source {
-                        if let Err(e) = restore_backup(source, &self.base_dir, &self.backup_root) {
+                        if let Err(e) = self.restore_required(source) {
                             eprintln!("{}", t!("journal.error", source.display(), e));
                             failures += 1;
                         } else {
@@ -220,6 +223,15 @@ impl ChangeJournal {
         }
         println!("{}", t!("journal.rollback-complete"));
         Ok(())
+    }
+
+    /// 必须成功且保留备份的恢复；备份缺失（`Ok(false)`）视为失败。
+    fn restore_required(&self, target: &Path) -> anyhow::Result<()> {
+        if restore_backup_copy(target, &self.base_dir, &self.backup_root)? {
+            Ok(())
+        } else {
+            anyhow::bail!("{}", t!("journal.missing-backup", target.display()))
+        }
     }
 }
 
@@ -485,8 +497,8 @@ fn validate_mapped_source_targets(base_dir: &Path, manifest: &Manifest) -> anyho
 
 /// manifest 的 source / target / added / deleted / deleted_dirs 路径不得
 /// 指向当前补丁目录内部；否则 apply 会改写补丁自身的资源（例如 diff 文件、
-/// 备份、manifest），导致补丁不可用。
-fn ensure_manifest_paths_outside_patch_dir(
+/// 备份、manifest），导致补丁不可用。rollback 在修改任何文件前也必须调用。
+pub(crate) fn ensure_manifest_paths_outside_patch_dir(
     base_dir: &Path,
     patch_dir: &Path,
     manifest: &Manifest,
@@ -655,7 +667,7 @@ fn apply_changed_files(
             sha256_of_file(&target_path)?
         };
         if new_hash != item.new_sha256 {
-            if let Err(be) = restore_backup(&target_path, base_dir, &journal.backup_root) {
+            if let Err(be) = restore_backup_copy(&target_path, base_dir, &journal.backup_root) {
                 anyhow::bail!(
                     "{}",
                     t!(
@@ -749,7 +761,7 @@ fn apply_renamed_change(
     if new_hash != item.new_sha256 {
         // 撤销 target；source 此时尚未删除，保持原样。
         if target_had_backup {
-            let _ = restore_backup(target_path, base_dir, &journal.backup_root);
+            let _ = restore_backup_copy(target_path, base_dir, &journal.backup_root);
         } else if target_path.exists() {
             let _ = std::fs::remove_file(target_path);
         }

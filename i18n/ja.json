@@ -118,6 +118,7 @@
   "journal.recreated-dir": "  [rollback] ディレクトリを再作成しました: {0}",
   "journal.rollback-complete": "  [rollback] すべての変更を元に戻しました。",
   "journal.rollback-failed": "  [rollback] {0} 件の復元に失敗しました。適用ジャーナルは保持されています。再度実行して復元を続行できます。",
+  "journal.missing-backup": "  [rollback] 必要なバックアップが見つからないため復元できません: {0}",
   "apply.marker-created": "パッチを適用しました。適用識別子: {0}（パッチディレクトリ: {1}）",
   "apply.output-generated": "出力ファイル '{0}' が生成されました。",
   "rollback.summary": "ロールバック可能な内容を検出: 変更 {0}、追加 {1}、削除 {2}",

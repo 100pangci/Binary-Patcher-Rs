@@ -1175,6 +1175,43 @@ fn test_rollback_mapping_with_marker_and_journal_clears_both() {
     assert!(game.join("Patch/.applied_patch.json").exists());
 }
 
+#[test]
+fn test_rollback_rejects_mapped_target_replaced_with_source_content() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.chs", b"new payload changed");
+    write_mapping_file(base, &[("foo.pak", "foo.chs")]);
+    build_bundle(base);
+
+    let game = setup_game(base);
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+
+    // A -> B 的映射中 B 被改成了 A 的内容：old_sha256 是 source 的哈希，
+    // 绝不能当作 target 的合法回滚前状态。
+    std::fs::write(game.join("foo.chs"), b"old payload").unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.preflight-changed"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        b"old payload",
+        "rejected rollback must not touch the target"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.pak")).unwrap(),
+        b"old payload",
+        "source must stay untouched"
+    );
+    assert!(
+        game.join("Patch/.applied_patch.json").exists(),
+        "rejected rollback must keep the applied marker"
+    );
+}
+
 // ===========================================================================
 // Bundle staging: a failed build must not destroy the previous patch
 // ===========================================================================
@@ -1583,4 +1620,80 @@ fn test_apply_rejects_manifest_path_inside_patch_dir_case_variant() {
     );
     assert!(!game.join("patch/evil.txt").exists());
     assert!(!game.join("Patch/evil.txt").exists());
+}
+
+// ===========================================================================
+// Rollback guard: manifest paths must stay outside the patch directory
+// ===========================================================================
+
+#[test]
+fn test_rollback_rejects_manifest_path_inside_patch_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+    build_bundle(base);
+
+    let game = setup_game(base);
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+
+    // apply 成功后篡改 manifest 指向补丁目录内部；rollback 必须在任何
+    // 文件修改（包括 journal 恢复）之前拒绝。
+    let manifest_path = game.join("Patch/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    json["changed"][0]["path"] = serde_json::Value::String("Patch/evil.txt".to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    let before = std::fs::read(game.join("foo.pak")).unwrap();
+    let err = binary_patcher::rollback::rollback_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.pak")).unwrap(),
+        before,
+        "rejected rollback must not touch game files"
+    );
+    assert!(!game.join("Patch/evil.txt").exists());
+    assert!(
+        game.join("Patch/.applied_patch.json").exists(),
+        "rejected rollback must keep the applied marker"
+    );
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn test_rollback_rejects_manifest_path_inside_patch_dir_case_variant() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+    build_bundle(base);
+
+    let game = setup_game(base);
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+
+    // 大小写变体（patch/ 与 Patch/ 在 Windows/macOS 下是同一目录）必须被识别。
+    let manifest_path = game.join("Patch/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    json["changed"][0]["path"] = serde_json::Value::String("patch/evil.txt".to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    let before = std::fs::read(game.join("foo.pak")).unwrap();
+    let err = binary_patcher::rollback::rollback_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.pak")).unwrap(),
+        before,
+        "rejected rollback must not touch game files"
+    );
+    assert!(!game.join("patch/evil.txt").exists());
+    assert!(!game.join("Patch/evil.txt").exists());
+    assert!(game.join("Patch/.applied_patch.json").exists());
 }

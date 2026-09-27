@@ -18,6 +18,9 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     crate::patch::validate_patch_dir(base_dir, patch_dir)?;
 
     let manifest = Manifest::load(patch_dir)?;
+    // 与 apply 同一防护：manifest 路径不得指向补丁目录内部。
+    // 必须在 journal 恢复或任何文件修改之前完成校验。
+    crate::apply::ensure_manifest_paths_outside_patch_dir(base_dir, patch_dir, &manifest)?;
     let backup_root = checked_backup_root_dir(patch_dir)?;
 
     // 统一保护规则（适用于所有 patch，而非仅 mapping）：
@@ -225,8 +228,15 @@ fn preflight_rollback_state(
 ) -> anyhow::Result<()> {
     for item in &manifest.changed {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        let allowed = [item.new_sha256.as_str(), item.old_sha256.as_str()];
-        if !rollback_state_allowed(&target_path, &allowed, base_dir, backup_root)? {
+        // 普通 changed 的 target 可处于 apply 结果（new）或已恢复（old）；
+        // 映射 target 的 old_sha256 是 source 文件的哈希，不是 target 的合法
+        // 状态，只能允许 new、不存在、或与 target 自身备份一致。
+        let allowed: &[&str] = if item.is_renamed() {
+            &[item.new_sha256.as_str()]
+        } else {
+            &[item.new_sha256.as_str(), item.old_sha256.as_str()]
+        };
+        if !rollback_state_allowed(&target_path, allowed, base_dir, backup_root)? {
             anyhow::bail!("{}", t!("rollback.preflight-changed", item.path));
         }
         if item.is_renamed() && item.delete_source {
