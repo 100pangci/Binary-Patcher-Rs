@@ -4,7 +4,8 @@ use crate::backup::{
 use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{
-    apply_patch_auto, apply_patch_stream, patch_output_size, run_hpatchz, should_stream_apply,
+    AppliedOutput, apply_patch_auto, apply_patch_stream, patch_output_size, run_hpatchz,
+    should_stream_apply,
 };
 use crate::manifest::{ChangedEntry, Manifest};
 use crate::path::{ensure_parent_dir, resolve_safe_path};
@@ -357,6 +358,9 @@ pub fn apply_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<()> 
     }
 
     let manifest = Manifest::load(patch_dir)?;
+    // manifest 中任何路径都不得指向补丁目录内部：补丁目录属于补丁自身资源，
+    // 若被当作目标程序内容修改，会破坏补丁完整性。
+    ensure_manifest_paths_outside_patch_dir(base_dir, patch_dir, &manifest)?;
     let backup_root = checked_backup_root_dir(patch_dir)?;
     let journal_path = resolve_safe_path(patch_dir, JOURNAL_FILE_NAME)?;
     let mut journal = ChangeJournal::new(base_dir, &backup_root, &journal_path);
@@ -452,6 +456,48 @@ fn validate_mapped_source_targets(base_dir: &Path, manifest: &Manifest) -> anyho
                 )
             );
         }
+    }
+    Ok(())
+}
+
+/// manifest 的 source / target / added / deleted / deleted_dirs 路径不得
+/// 指向当前补丁目录内部；否则 apply 会改写补丁自身的资源（例如 diff 文件、
+/// 备份、manifest），导致补丁不可用。
+fn ensure_manifest_paths_outside_patch_dir(
+    base_dir: &Path,
+    patch_dir: &Path,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    let patch_abs = std::path::absolute(patch_dir)?;
+    let ensure_outside = |relative_path: &str| -> anyhow::Result<()> {
+        let resolved = resolve_safe_path(base_dir, relative_path)?;
+        if resolved.starts_with(&patch_abs) {
+            anyhow::bail!(
+                "{}",
+                t!(
+                    "apply.path-in-patch-dir",
+                    relative_path,
+                    patch_dir.display()
+                )
+            );
+        }
+        Ok(())
+    };
+
+    for item in &manifest.changed {
+        ensure_outside(&item.path)?;
+        if let Some(source) = item.source_path.as_deref() {
+            ensure_outside(source)?;
+        }
+    }
+    for item in &manifest.added {
+        ensure_outside(&item.path)?;
+    }
+    for item in &manifest.deleted {
+        ensure_outside(&item.path)?;
+    }
+    for dir in &manifest.deleted_dirs {
+        ensure_outside(dir)?;
     }
     Ok(())
 }
@@ -554,9 +600,10 @@ fn apply_changed_files(
         // 流式路径以备份文件作为差分输入：source 与 target 同路径时，
         // output 截断不会破坏尚未读取的输入。
         let new_hash = if let Some(data) = old_data {
-            let new_data =
-                apply_patch_auto(data, &backup_path, patch_data, &target_path, thread_count)?;
-            sha256_of_bytes(&new_data)
+            match apply_patch_auto(data, &backup_path, patch_data, &target_path, thread_count)? {
+                AppliedOutput::InMemory(new_data) => sha256_of_bytes(&new_data),
+                AppliedOutput::Streamed => sha256_of_file(&target_path)?,
+            }
         } else {
             apply_patch_stream(&backup_path, &patch_data, &target_path, thread_count)?;
             sha256_of_file(&target_path)?
@@ -645,8 +692,10 @@ fn apply_renamed_change(
     let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
     let new_hash = if let Some(data) = old_data {
-        let new_data = apply_patch_auto(data, source_path, patch_data, target_path, thread_count)?;
-        sha256_of_bytes(&new_data)
+        match apply_patch_auto(data, source_path, patch_data, target_path, thread_count)? {
+            AppliedOutput::InMemory(new_data) => sha256_of_bytes(&new_data),
+            AppliedOutput::Streamed => sha256_of_file(target_path)?,
+        }
     } else {
         apply_patch_stream(source_path, &patch_data, target_path, thread_count)?;
         sha256_of_file(target_path)?

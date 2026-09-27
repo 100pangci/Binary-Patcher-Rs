@@ -226,6 +226,125 @@ fn test_rollback_plain_patch_with_journal_uses_crash_recovery() {
 }
 
 // ===========================================================================
+// Rollback preflight: user-modified apply results must be rejected untouched
+// ===========================================================================
+
+fn build_applied_workspace(base_dir: &std::path::Path) -> std::path::PathBuf {
+    build_workspace(base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    copy_tree_files(&base_dir.join("Patch"), &game_dir.join("Patch"));
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    game_dir
+}
+
+#[test]
+fn test_rollback_rejects_user_modified_added_file_without_touching_files() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+
+    // 用户修改 apply 生成的新增文件：rollback 必须拒绝，且不修改任何文件。
+    std::fs::write(game_dir.join("new_file.dll"), "user modified added").unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.preflight-added"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll")).unwrap(),
+        "user modified added",
+        "user-modified added file must stay untouched"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=new\nport=8080\n",
+        "rejected rollback must not restore changed files"
+    );
+    assert!(
+        !game_dir.join("deprecated.log").exists(),
+        "rejected rollback must not restore deleted files"
+    );
+    assert!(
+        game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "rejected rollback must keep the applied marker"
+    );
+}
+
+#[test]
+fn test_rollback_rejects_user_modified_changed_file_without_touching_files() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+    let game_patch = game_dir.join("Patch");
+
+    // 用户修改 apply 后的变更文件：rollback 必须拒绝，且不修改任何文件。
+    std::fs::write(game_dir.join("config.ini"), "user tampered config").unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.preflight-changed"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "user tampered config",
+        "user-modified changed file must stay untouched"
+    );
+    assert!(
+        game_dir.join("new_file.dll").exists(),
+        "rejected rollback must not remove added files"
+    );
+    assert!(
+        game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "rejected rollback must keep the applied marker"
+    );
+}
+
+#[test]
+fn test_rollback_rejects_added_target_replaced_by_non_empty_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    let game_dir = build_applied_workspace(&base_dir);
+
+    // added 文件被用户替换为非空目录：绝不能递归删除。
+    std::fs::remove_file(game_dir.join("new_file.dll")).unwrap();
+    std::fs::create_dir(game_dir.join("new_file.dll")).unwrap();
+    std::fs::write(game_dir.join("new_file.dll/user_data.txt"), "keep me").unwrap();
+
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.preflight-added"),
+        "unexpected error: {err}"
+    );
+
+    assert!(
+        game_dir.join("new_file.dll").is_dir(),
+        "directory must not be deleted"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("new_file.dll/user_data.txt")).unwrap(),
+        "keep me",
+        "user data inside the directory must survive"
+    );
+}
+
+// ===========================================================================
 // Deleted files: missing / hash mismatch must abort and roll back
 // ===========================================================================
 
@@ -412,6 +531,59 @@ fn test_apply_patch_stream_writes_output_file() {
     binary_patcher::hdiffpatch::apply_patch_stream(&old_path, &empty_patch_data, &output_path, 2)
         .unwrap();
     assert_eq!(std::fs::read(&output_path).unwrap(), b"");
+}
+
+#[test]
+fn test_apply_patch_auto_stream_fallback_does_not_read_output_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.bin");
+    let new_path = dir.path().join("new.bin");
+    let patch_path = dir.path().join("patch.hdiff");
+    let output_path = dir.path().join("output.bin");
+
+    let mut old_data = vec![0u8; 128 * 1024];
+    for (i, byte) in old_data.iter_mut().enumerate() {
+        *byte = (i % 251) as u8;
+    }
+    let mut new_data = old_data.clone();
+    new_data.extend_from_slice(b"fallback tail");
+    new_data[2048..4096].fill(0x5A);
+    std::fs::write(&old_path, &old_data).unwrap();
+    std::fs::write(&new_path, &new_data).unwrap();
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true).unwrap();
+    let patch_data = std::fs::read(&patch_path).unwrap();
+
+    // 阈值为 0 强制走流式回退：返回 Streamed，输出绝不读回内存。
+    let result = binary_patcher::hdiffpatch::apply_patch_auto_with_limit(
+        old_data.clone(),
+        &old_path,
+        patch_data.clone(),
+        &output_path,
+        2,
+        0,
+    )
+    .unwrap();
+    assert!(matches!(
+        result,
+        binary_patcher::hdiffpatch::AppliedOutput::Streamed
+    ));
+    assert_eq!(std::fs::read(&output_path).unwrap(), new_data);
+
+    // 正常小文件快速路径仍返回内存数据。
+    let output_mem = dir.path().join("output_mem.bin");
+    let result = binary_patcher::hdiffpatch::apply_patch_auto(
+        old_data,
+        &old_path,
+        patch_data,
+        &output_mem,
+        2,
+    )
+    .unwrap();
+    assert!(matches!(
+        result,
+        binary_patcher::hdiffpatch::AppliedOutput::InMemory(_)
+    ));
+    assert_eq!(std::fs::read(&output_mem).unwrap(), new_data);
 }
 
 // ===========================================================================

@@ -187,13 +187,45 @@ pub fn apply_patch_stream(
     }
 }
 
+/// [`apply_patch_auto`] 的输出形态。
+///
+/// 流式回退时输出只写入文件，绝不整文件读回内存（大文件下读回会再次 OOM）；
+/// 调用方遇到 [`AppliedOutput::Streamed`] 应使用 `sha256_of_file` 校验文件。
+#[derive(Debug)]
+pub enum AppliedOutput {
+    /// 内存路径：输出同时保存在内存中，可直接哈希。
+    InMemory(Vec<u8>),
+    /// 流式路径：输出只写入目标文件。
+    Streamed,
+}
+
 pub fn apply_patch_auto(
     old_data: Vec<u8>,
     old_file: &Path,
     patch_data: Vec<u8>,
     output_file: &Path,
     thread_count: u32,
-) -> Result<Vec<u8>, anyhow::Error> {
+) -> Result<AppliedOutput, anyhow::Error> {
+    apply_patch_auto_with_limit(
+        old_data,
+        old_file,
+        patch_data,
+        output_file,
+        thread_count,
+        MAX_MEM_DIFF_BYTES,
+    )
+}
+
+/// [`apply_patch_auto`] 的可注入内存阈值版本，供测试触发流式回退路径。
+#[doc(hidden)]
+pub fn apply_patch_auto_with_limit(
+    old_data: Vec<u8>,
+    old_file: &Path,
+    patch_data: Vec<u8>,
+    output_file: &Path,
+    thread_count: u32,
+    max_mem_bytes: u64,
+) -> Result<AppliedOutput, anyhow::Error> {
     crate::path::ensure_no_symlink_components(old_file)?;
     crate::path::ensure_parent_dir(output_file)?;
 
@@ -202,9 +234,9 @@ pub fn apply_patch_auto(
     let new_size = ffi::patch_new_size(&patch_data).map_err(|e| anyhow::anyhow!("{e}"))?;
     if new_size == 0 {
         std::fs::write(output_file, [])?;
-        return Ok(Vec::new());
+        return Ok(AppliedOutput::InMemory(Vec::new()));
     }
-    if old_data.len() as u64 + new_size as u64 > MAX_MEM_DIFF_BYTES {
+    if old_data.len() as u64 + new_size as u64 > max_mem_bytes {
         eprintln!(
             "{}",
             t!(
@@ -217,10 +249,7 @@ pub fn apply_patch_auto(
         ffi::apply_patch_file(old_file, &patch_data, output_file, thread_count)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(patch_data);
-        let new_data = std::fs::read(output_file).map_err(|e| {
-            anyhow::anyhow!("{}", t!("ffi.read-output-failed", output_file.display(), e))
-        })?;
-        return Ok(new_data);
+        return Ok(AppliedOutput::Streamed);
     }
 
     let result = apply_patch_with_retry(&old_data, &patch_data, thread_count);
@@ -232,7 +261,7 @@ pub fn apply_patch_auto(
                     t!("ffi.write-output-failed", output_file.display(), e)
                 )
             })?;
-            Ok(new_data)
+            Ok(AppliedOutput::InMemory(new_data))
         }
         Err(e) if e.is_oom() => {
             eprintln!("{}", t!("hdiff.stream-fallback"));
@@ -241,10 +270,7 @@ pub fn apply_patch_auto(
             ffi::apply_patch_file(old_file, &patch_data, output_file, thread_count)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             drop(patch_data);
-            let new_data = std::fs::read(output_file).map_err(|e| {
-                anyhow::anyhow!("{}", t!("ffi.read-output-failed", output_file.display(), e))
-            })?;
-            Ok(new_data)
+            Ok(AppliedOutput::Streamed)
         }
         Err(e) => Err(e.into()),
     }

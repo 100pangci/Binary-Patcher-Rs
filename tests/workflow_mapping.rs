@@ -1399,3 +1399,156 @@ fn test_apply_rejects_source_target_resolving_to_same_file() {
         "rejected apply must not leave a journal"
     );
 }
+
+// ===========================================================================
+// Bundle staging / retired directories use unique names (never fixed names)
+// ===========================================================================
+
+#[test]
+fn test_bundle_does_not_touch_user_dirs_with_staging_like_names() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+
+    // 用户目录恰好使用旧的固定 staging/retired 名：绝不能被构建清理。
+    write_file(
+        base,
+        ".Patch.staging",
+        "user/keep.txt",
+        b"user staging data",
+    );
+    write_file(
+        base,
+        ".Patch.retired",
+        "user/keep.txt",
+        b"user retired data",
+    );
+
+    build_bundle(base);
+    // 第二次构建会替换已有 Patch，走 retired 流程。
+    build_bundle(base);
+
+    assert_eq!(
+        std::fs::read(base.join(".Patch.staging/user/keep.txt")).unwrap(),
+        b"user staging data",
+        "user directory with the legacy staging name must survive"
+    );
+    assert_eq!(
+        std::fs::read(base.join(".Patch.retired/user/keep.txt")).unwrap(),
+        b"user retired data",
+        "user directory with the legacy retired name must survive"
+    );
+    assert!(base.join("Patch/manifest.json").is_file());
+
+    // 本次构建创建的临时目录必须已被清理。
+    for entry in std::fs::read_dir(base).unwrap() {
+        let name = entry.unwrap().file_name().to_string_lossy().to_string();
+        assert!(
+            !name.starts_with(".Patch.staging.") && !name.starts_with(".Patch.retired."),
+            "temporary directory left behind: {name}"
+        );
+    }
+}
+
+// ===========================================================================
+// Patch output directory name must not collide with content in Old/New
+// ===========================================================================
+
+#[test]
+fn test_bundle_rejects_patch_dir_name_conflict() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "Patch/legacy.dat", b"tool data");
+    write_file(base, "New", "foo.txt", b"new file");
+
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("bundle.patch-dir-conflict"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !base.join("Patch/manifest.json").exists(),
+        "rejected bundle must not create a manifest"
+    );
+    assert!(
+        base.join("Old/Patch/legacy.dat").is_file(),
+        "user content must stay untouched"
+    );
+}
+
+#[test]
+fn test_bundle_rejects_patch_dir_name_conflict_in_new() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "old.txt", b"old file");
+    write_file(base, "New", "Patch/tool.dat", b"tool data");
+
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("bundle.patch-dir-conflict"),
+        "unexpected error: {err}"
+    );
+    assert!(!base.join("Patch/manifest.json").exists());
+}
+
+#[test]
+fn test_bundle_patch_name_option_avoids_conflict() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "Patch/legacy.dat", b"tool data");
+    write_file(base, "New", "foo.txt", b"new file");
+
+    binary_patcher::bundle::build_patch_bundle_with_name(
+        base,
+        PatchMode::Memory,
+        PatchFormat::Precise,
+        Some("localized"),
+    )
+    .unwrap();
+
+    assert!(base.join("Patch_localized/manifest.json").is_file());
+    assert!(base.join("Old/Patch/legacy.dat").is_file());
+}
+
+// ===========================================================================
+// Apply guard: manifest paths must stay outside the patch directory
+// ===========================================================================
+
+#[test]
+fn test_apply_rejects_manifest_path_inside_patch_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+    build_bundle(base);
+
+    // 人为把 changed 目标改到补丁目录内部。
+    let manifest_path = base.join("Patch/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    json["changed"][0]["path"] = serde_json::Value::String("Patch/evil.txt".to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    let game = setup_game(base);
+    let before = std::fs::read(game.join("foo.pak")).unwrap();
+    let err = binary_patcher::apply::apply_bundle(&game).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(game.join("foo.pak")).unwrap(),
+        before,
+        "rejected apply must not touch game files"
+    );
+    assert!(!game.join("Patch/evil.txt").exists());
+    assert!(!game.join("Patch/.applied_patch.json").exists());
+    assert!(
+        !game
+            .join("Patch")
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "rejected apply must not leave a journal"
+    );
+}

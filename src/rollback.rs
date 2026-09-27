@@ -1,5 +1,6 @@
 use crate::backup::{checked_backup_root_dir, restore_backup};
 use crate::fs::cleanup_empty_dirs;
+use crate::hash::sha256_of_file;
 use crate::manifest::Manifest;
 use crate::path::{display_path, resolve_safe_path};
 use crate::t;
@@ -36,6 +37,10 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     if crate::patch::load_applied_marker(patch_dir)?.is_none() {
         anyhow::bail!("{}", t!("rollback.not-applied", patch_dir.display()));
     }
+
+    // 完整 preflight：所有「apply 结束时应有的状态」都必须成立才允许回滚。
+    // 一旦任何文件已被用户改动，直接拒绝，且不修改任何文件。
+    preflight_rollback_state(base_dir, &manifest)?;
 
     let changed = &manifest.changed;
     let added = &manifest.added;
@@ -146,26 +151,8 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
                     }
                 }
             } else if target_path.is_dir() {
-                if target_path.read_dir()?.next().is_none() {
-                    std::fs::remove_dir(&target_path)?;
-                    removed_count += 1;
-                    println!(
-                        "{}",
-                        t!("rollback.removed-empty-dir", target_path.display())
-                    );
-                    if let Some(parent) = target_path.parent() {
-                        for dir in cleanup_empty_dirs(parent, base_dir)? {
-                            println!(
-                                "{}",
-                                t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
-                            );
-                        }
-                    }
-                } else {
-                    std::fs::remove_dir_all(&target_path)?;
-                    removed_count += 1;
-                    println!("{}", t!("rollback.removed-dir", target_path.display()));
-                }
+                // added 文件后来变成目录（可能是用户数据）：绝不递归删除。
+                anyhow::bail!("{}", t!("rollback.added-is-dir", item.path));
             }
         } else {
             println!("{}", t!("rollback.skip-not-exists", target_path.display()));
@@ -210,6 +197,52 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     }
 
     crate::patch::remove_applied_marker(patch_dir)?;
+
+    Ok(())
+}
+
+/// rollback 前状态校验（只读）：
+///
+/// - changed / mapped target：存在时必须匹配 `new_sha256`；
+/// - added：必须仍是普通文件且匹配 `new_sha256`；
+/// - deleted：必须保持不存在；
+/// - `delete_source=true` 的 source：必须保持不存在。
+///
+/// 任一项不满足都返回错误，调用方不得在失败前修改任何文件。
+fn preflight_rollback_state(base_dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
+    for item in &manifest.changed {
+        let target_path = resolve_safe_path(base_dir, &item.path)?;
+        if target_path.exists()
+            && (!target_path.is_file() || sha256_of_file(&target_path)? != item.new_sha256)
+        {
+            anyhow::bail!("{}", t!("rollback.preflight-changed", item.path));
+        }
+        if item.is_renamed() && item.delete_source {
+            let source_path = resolve_safe_path(base_dir, item.old_relative_path())?;
+            if source_path.exists() {
+                anyhow::bail!(
+                    "{}",
+                    t!("rollback.preflight-source", item.old_relative_path())
+                );
+            }
+        }
+    }
+
+    for item in &manifest.added {
+        let target_path = resolve_safe_path(base_dir, &item.path)?;
+        let is_regular_file = std::fs::symlink_metadata(&target_path)
+            .is_ok_and(|metadata| metadata.file_type().is_file());
+        if !is_regular_file || sha256_of_file(&target_path)? != item.new_sha256 {
+            anyhow::bail!("{}", t!("rollback.preflight-added", item.path));
+        }
+    }
+
+    for item in &manifest.deleted {
+        let target_path = resolve_safe_path(base_dir, &item.path)?;
+        if target_path.exists() {
+            anyhow::bail!("{}", t!("rollback.preflight-deleted", item.path));
+        }
+    }
 
     Ok(())
 }

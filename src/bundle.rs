@@ -32,28 +32,29 @@ pub fn build_patch_bundle_with_name(
     let old_dir = base_dir.join("Old");
     let new_dir = base_dir.join("New");
     let patch_dir = patch_dir_for_name(base_dir, patch_name)?;
+    let patch_dir_name = patch_dir.file_name().map_or_else(
+        || DEFAULT_PATCH_DIR_NAME.to_string(),
+        |name| name.to_string_lossy().to_string(),
+    );
 
     crate::path::ensure_no_symlink_components(&old_dir)?;
     crate::path::ensure_no_symlink_components(&new_dir)?;
     crate::path::ensure_no_symlink_components(&patch_dir)?;
 
-    // 所有 preflight 校验（file-map、路径等）必须在改动正式 Patch 之前完成。
+    // 所有 preflight 校验（补丁目录名冲突、file-map、路径等）必须在改动正式 Patch 之前完成。
+    // Old/New 顶层若有与输出补丁目录同名的条目（例如 Old/Patch/...），
+    // apply/rollback 会把补丁自身当作目标程序内容处理，必须提前拒绝。
+    ensure_no_patch_dir_name_conflict(&old_dir, &patch_dir_name)?;
+    ensure_no_patch_dir_name_conflict(&new_dir, &patch_dir_name)?;
+
     let file_map = crate::file_map::load_file_map(base_dir)?.unwrap_or_default();
     crate::file_map::validate_file_map(&file_map, &old_dir, &new_dir)?;
 
-    // 完整生成到临时 staging 目录，成功后再替换正式 Patch：
-    // 任何失败都只清理 staging，上一份有效 Patch 保持不变。
-    let staging_dir = staging_dir_for(&patch_dir);
-    crate::path::ensure_no_symlink_components(&staging_dir)?;
-    if staging_dir.exists() {
-        std::fs::remove_dir_all(&staging_dir)?;
-    }
-    std::fs::create_dir_all(&staging_dir)?;
+    // 完整生成到唯一命名的临时 staging 目录，成功后再替换正式 Patch：
+    // 任何失败都只清理本次创建的 staging，上一份有效 Patch 保持不变。
+    // 临时目录名带 pid/时间戳，绝不使用固定名，避免误删用户同名目录。
+    let staging_dir = create_unique_temp_dir(&patch_dir, "staging")?;
 
-    let patch_dir_name = patch_dir.file_name().map_or_else(
-        || DEFAULT_PATCH_DIR_NAME.to_string(),
-        |name| name.to_string_lossy().to_string(),
-    );
     let counts = match build_bundle_into(
         &staging_dir,
         &old_dir,
@@ -305,22 +306,63 @@ fn build_bundle_into(
     })
 }
 
-/// staging 目录：正式 Patch 的同级隐藏目录，构建失败可整体丢弃。
-fn staging_dir_for(patch_dir: &Path) -> PathBuf {
-    patch_dir.with_file_name(staging_name(patch_dir, "staging"))
+/// Old/New 顶层不允许出现与补丁输出目录同名的条目。
+///
+/// 名称比较使用 [`comparison_key`]（Windows/macOS 大小写不敏感），
+/// 与扫描阶段的匹配规则一致。
+fn ensure_no_patch_dir_name_conflict(root_dir: &Path, patch_dir_name: &str) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(root_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let expected = comparison_key(patch_dir_name);
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if comparison_key(name) == expected {
+            let root_name = root_dir.file_name().map_or_else(
+                || root_dir.display().to_string(),
+                |n| n.to_string_lossy().to_string(),
+            );
+            anyhow::bail!(
+                "{}",
+                t!("bundle.patch-dir-conflict", root_name, name, patch_dir_name)
+            );
+        }
+    }
+    Ok(())
 }
 
-/// 替换使用的暂存目录：先将旧 Patch 改名到此处，再换入新 Patch。
-fn retired_dir_for(patch_dir: &Path) -> PathBuf {
-    patch_dir.with_file_name(staging_name(patch_dir, "retired"))
-}
-
-fn staging_name(patch_dir: &Path, suffix: &str) -> String {
-    let name = patch_dir.file_name().map_or_else(
+/// 创建唯一命名的临时目录（与 Patch 目录同级）。
+///
+/// 名字包含进程号、时间戳与重试序号；只有本函数成功创建、
+/// 可确认归属的目录才允许被调用方清理，绝不触碰现有同名目录。
+fn create_unique_temp_dir(patch_dir: &Path, suffix: &str) -> anyhow::Result<PathBuf> {
+    let parent = patch_dir.parent().unwrap_or_else(|| Path::new("."));
+    let base_name = patch_dir.file_name().map_or_else(
         || DEFAULT_PATCH_DIR_NAME.to_string(),
         |n| n.to_string_lossy().to_string(),
     );
-    format!(".{name}.{suffix}")
+    let pid = std::process::id();
+
+    for attempt in 0u32..100 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let candidate = parent.join(format!(".{base_name}.{suffix}.{pid}.{nanos}.{attempt}"));
+        crate::path::ensure_no_symlink_components(&candidate)?;
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    anyhow::bail!("{}", t!("bundle.temp-dir-failed", patch_dir.display()))
 }
 
 /// 用 staging 目录替换正式 Patch；失败时尽力恢复旧 Patch。
@@ -331,11 +373,10 @@ fn replace_patch_dir(patch_dir: &Path, staging_dir: &Path) -> anyhow::Result<()>
     }
 
     eprintln!("{}", t!("bundle.will-clear-patch", patch_dir.display()));
-    let retired_dir = retired_dir_for(patch_dir);
-    crate::path::ensure_no_symlink_components(&retired_dir)?;
-    if retired_dir.exists() {
-        std::fs::remove_dir_all(&retired_dir)?;
-    }
+    // 唯一命名 + 原子创建：只把旧 Patch 移入本次创建、可确认归属的
+    // retired 目录，绝不删除可能属于用户的现有同名目录。
+    let retired_dir = create_unique_temp_dir(patch_dir, "retired")?;
+    std::fs::remove_dir(&retired_dir)?;
     std::fs::rename(patch_dir, &retired_dir)?;
     match std::fs::rename(staging_dir, patch_dir) {
         Ok(()) => {
