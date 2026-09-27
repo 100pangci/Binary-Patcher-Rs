@@ -1276,6 +1276,97 @@ fn test_journal_rejects_path_traversal() {
     );
 }
 
+#[test]
+fn test_journal_rejects_path_inside_patch_dir_without_modification() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let backup_root = patch_dir.join(".backup_before_patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    let manifest_content = "{\"sentinel\":true}";
+    std::fs::write(patch_dir.join("manifest.json"), manifest_content).unwrap();
+
+    // 为 Patch/manifest.json 准备备份：若恢复没有被整体前置拦截，
+    // 它会被用来覆盖 manifest，且同 journal 中的其他条目也会被处理。
+    std::fs::create_dir_all(backup_root.join("Patch")).unwrap();
+    std::fs::write(
+        backup_root.join("Patch/manifest.json.backup_before_patch"),
+        "EVIL",
+    )
+    .unwrap();
+
+    std::fs::write(base.join("extra.txt"), "keep me").unwrap();
+    std::fs::write(
+        &journal_path,
+        r#"[
+            {"type":"added","path":"extra.txt","had_backup":false},
+            {"type":"deleted","path":"Patch/manifest.json"}
+        ]"#,
+    )
+    .unwrap();
+
+    let err = binary_patcher::apply::rollback_from_journal(base, &patch_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("journal.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(patch_dir.join("manifest.json")).unwrap(),
+        manifest_content,
+        "rejected journal rollback must not touch patch resources"
+    );
+    assert!(
+        base.join("extra.txt").exists(),
+        "rejected journal rollback must not process other entries"
+    );
+    assert!(
+        journal_path.exists(),
+        "journal must be preserved when recovery is rejected"
+    );
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn test_journal_rejects_case_variant_path_inside_patch_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let patch_dir = base.join("Patch");
+    let journal_path = patch_dir.join(binary_patcher::apply::JOURNAL_FILE_NAME);
+    std::fs::create_dir_all(&patch_dir).unwrap();
+
+    let manifest_content = "{\"sentinel\":true}";
+    std::fs::write(patch_dir.join("manifest.json"), manifest_content).unwrap();
+
+    // 大小写变体（patch/ 与 Patch/ 在 Windows/macOS 下是同一目录）必须被识别；
+    // renamed_patched 条目覆盖 source / target 两个字段。
+    std::fs::write(
+        &journal_path,
+        r#"[{
+            "type":"renamed_patched",
+            "source":"patch/evil-src.bin",
+            "target":"patch/evil-dst.bin",
+            "target_had_backup":false,
+            "delete_source":false
+        }]"#,
+    )
+    .unwrap();
+
+    let err = binary_patcher::apply::rollback_from_journal(base, &patch_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("journal.path-in-patch-dir"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(patch_dir.join("manifest.json")).unwrap(),
+        manifest_content
+    );
+    assert!(!patch_dir.join("evil-src.bin").exists());
+    assert!(!patch_dir.join("evil-dst.bin").exists());
+    assert!(journal_path.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn test_journal_symlink_is_rejected() {

@@ -156,6 +156,33 @@ fn is_valid_sha256(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// 跨类别冲突检测使用的逻辑键。
+///
+/// 折叠 `.`、重复分隔符与根内 `..`，Windows/macOS 下按
+/// [`crate::file_map::comparison_key`] 处理大小写等价。绝对路径与越出根的
+/// 路径返回 `None`：它们会被 `resolve_safe_path` 在 apply 阶段拒绝，
+/// 这里只负责识别「同一逻辑路径被多个条目引用」。
+fn conflict_key(raw: &str) -> Option<String> {
+    let unified = raw.replace('\\', "/");
+    if unified.starts_with('/') || Path::new(&unified).is_absolute() {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in unified.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(crate::file_map::comparison_key(&parts.join("/")))
+}
+
 impl Default for Manifest {
     fn default() -> Self {
         Self {
@@ -175,6 +202,24 @@ impl Manifest {
         if parse_semver(&self.format).is_none() {
             anyhow::bail!("{}", t!("manifest.format-invalid", self.format));
         }
+
+        // 跨类别逻辑路径冲突：changed 目标 / mapping 源 / added / deleted 之间
+        // 不得出现同一逻辑路径（含规范化与 Windows/macOS 大小写等价），
+        // 否则 apply / rollback 会互相覆盖或删除。crafted / 损坏 manifest
+        // 必须在这里整体拒绝。
+        let mut logical_paths: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        let mut claim = |raw: &str, owner: String| -> anyhow::Result<()> {
+            if let Some(key) = conflict_key(raw)
+                && let Some(existing) = logical_paths.insert(key, owner.clone())
+            {
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.logical-path-conflict", raw, existing, owner)
+                );
+            }
+            Ok(())
+        };
 
         let mut patch_files = std::collections::BTreeSet::new();
         for (idx, item) in self.changed.iter().enumerate() {
@@ -206,6 +251,13 @@ impl Manifest {
                     "{}",
                     t!("manifest.changed-delete-source-without-source", idx)
                 );
+            }
+            claim(&item.path, format!("changed[{idx}].path"))?;
+            if item.is_renamed() {
+                claim(
+                    item.old_relative_path(),
+                    format!("changed[{idx}].source_path"),
+                )?;
             }
             if item.old_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-old-sha", idx));
@@ -240,6 +292,7 @@ impl Manifest {
             if item.path.is_empty() {
                 anyhow::bail!("{}", t!("manifest.added-path-empty", idx));
             }
+            claim(&item.path, format!("added[{idx}].path"))?;
             if item.new_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.added-missing-sha", idx));
             }
@@ -255,6 +308,7 @@ impl Manifest {
             if item.path.is_empty() {
                 anyhow::bail!("{}", t!("manifest.deleted-path-empty", idx));
             }
+            claim(&item.path, format!("deleted[{idx}].path"))?;
             if item.old_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.deleted-missing-sha", idx));
             }

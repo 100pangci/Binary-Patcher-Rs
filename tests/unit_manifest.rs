@@ -412,6 +412,132 @@ fn test_manifest_rejects_duplicate_patch_resource() {
 }
 
 // ===========================================================================
+// Cross-category logical path conflicts
+// ===========================================================================
+
+fn changed_entry(
+    path: &str,
+    source_path: Option<&str>,
+    patch_file: &str,
+) -> binary_patcher::manifest::ChangedEntry {
+    binary_patcher::manifest::ChangedEntry {
+        path: path.to_string(),
+        source_path: source_path.map(str::to_string),
+        delete_source: false,
+        old_sha256: "a".repeat(64),
+        new_sha256: "b".repeat(64),
+        patch_file: patch_file.to_string(),
+    }
+}
+
+fn added_entry(path: &str) -> binary_patcher::manifest::AddedEntry {
+    binary_patcher::manifest::AddedEntry {
+        path: path.to_string(),
+        new_sha256: "c".repeat(64),
+        file: format!("{path}.new"),
+    }
+}
+
+fn deleted_entry(path: &str) -> binary_patcher::manifest::DeletedEntry {
+    binary_patcher::manifest::DeletedEntry {
+        path: path.to_string(),
+        old_sha256: "d".repeat(64),
+    }
+}
+
+fn manifest_with(
+    changed: Vec<binary_patcher::manifest::ChangedEntry>,
+    added: Vec<binary_patcher::manifest::AddedEntry>,
+    deleted: Vec<binary_patcher::manifest::DeletedEntry>,
+) -> Manifest {
+    Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed,
+        added,
+        deleted,
+        deleted_dirs: vec![],
+    }
+}
+
+fn assert_logical_path_conflict(manifest: &Manifest) {
+    let err = manifest.validate().unwrap_err();
+    assert!(
+        err.to_string().contains("manifest.logical-path-conflict"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_manifest_rejects_duplicate_changed_targets() {
+    let manifest = manifest_with(
+        vec![
+            changed_entry("dup.bin", None, "dup-1.patch"),
+            changed_entry("dup.bin", None, "dup-2.patch"),
+        ],
+        vec![],
+        vec![],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+#[test]
+fn test_manifest_rejects_changed_added_path_conflict() {
+    let manifest = manifest_with(
+        vec![changed_entry("same.bin", None, "same.bin.patch")],
+        vec![added_entry("same.bin")],
+        vec![],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+#[test]
+fn test_manifest_rejects_added_deleted_path_conflict() {
+    let manifest = manifest_with(
+        vec![],
+        vec![added_entry("same.bin")],
+        vec![deleted_entry("same.bin")],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+#[test]
+fn test_manifest_rejects_mapping_source_conflict_with_deleted() {
+    let manifest = manifest_with(
+        vec![changed_entry(
+            "data/foo.chs",
+            Some("data/foo.pak"),
+            "data/foo.chs.patch",
+        )],
+        vec![],
+        vec![deleted_entry("data/foo.pak")],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+#[test]
+fn test_manifest_rejects_dot_normalized_path_conflict() {
+    let manifest = manifest_with(
+        vec![changed_entry("data/foo.bin", None, "data/foo.bin.patch")],
+        vec![added_entry("./data/foo.bin")],
+        vec![],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn test_manifest_rejects_case_variant_path_conflict() {
+    let manifest = manifest_with(
+        vec![changed_entry("Data/FOO.bin", None, "Data/FOO.bin.patch")],
+        vec![added_entry("data/foo.bin")],
+        vec![],
+    );
+    assert_logical_path_conflict(&manifest);
+}
+
+// ===========================================================================
 // Mapping schema version guard
 // ===========================================================================
 

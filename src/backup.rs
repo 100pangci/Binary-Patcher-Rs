@@ -36,9 +36,26 @@ pub fn write_backup(
     base_dir: &Path,
     backup_root: &Path,
 ) -> anyhow::Result<PathBuf> {
-    let (mut backup_file, backup_path) = open_backup_file(target_path, base_dir, backup_root)?;
-    std::io::Write::write_all(&mut backup_file, data)?;
-    Ok(backup_path)
+    let (backup_file, backup_path) = open_backup_file(target_path, base_dir, backup_root)?;
+    write_backup_file(backup_file, &backup_path, data)
+}
+
+/// 将 `data` 完整写入本次创建的备份文件。
+///
+/// 与 [`create_backup`] 相同：写入失败时先关闭句柄（Windows 上未关闭的
+/// 句柄会阻止删除），再删除本次刚创建的半截备份并返回原错误。绝不能让
+/// 半截 backup 留下来被 [`find_backup`] 误认为有效备份。
+fn write_backup_file(
+    mut backup_file: std::fs::File,
+    backup_path: &Path,
+    data: &[u8],
+) -> anyhow::Result<PathBuf> {
+    if let Err(error) = std::io::Write::write_all(&mut backup_file, data) {
+        drop(backup_file);
+        let _ = std::fs::remove_file(backup_path);
+        return Err(error.into());
+    }
+    Ok(backup_path.to_path_buf())
 }
 
 /// 在备份目录中创建唯一的备份文件（处理重名重试），返回文件句柄与路径。
@@ -234,5 +251,31 @@ fn open_restore_temp_file(target_path: &Path) -> anyhow::Result<(std::fs::File, 
             }
             Err(error) => return Err(error.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 模拟写入失败（只读句柄在 Unix/Windows 上 write 都会失败）：
+    /// 句柄必须关闭、半截备份必须删除，且返回原错误。
+    #[test]
+    fn write_backup_file_removes_partial_backup_on_write_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let backup_path = dir.path().join("file.txt.backup_before_patch");
+        std::fs::write(&backup_path, b"partial").unwrap();
+
+        let read_only_handle = std::fs::File::open(&backup_path).unwrap();
+        let error = write_backup_file(read_only_handle, &backup_path, b"new data").unwrap_err();
+
+        assert!(
+            !backup_path.exists(),
+            "failed write must remove the candidate backup (error: {error})"
+        );
+        assert!(
+            !error.to_string().is_empty(),
+            "the original write error must be propagated"
+        );
     }
 }

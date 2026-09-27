@@ -277,12 +277,51 @@ fn load_journal(journal_path: &Path, base_dir: &Path) -> anyhow::Result<Vec<Jour
         .collect()
 }
 
+/// journal 中所有路径必须在补丁目录外部：journal 可被篡改/损坏，若放任其
+/// 指向 Patch 内部，恢复会删除或覆盖补丁自身资源（manifest、diff、备份）。
+/// 复用 manifest 的组件级逻辑路径防护（Windows/macOS 大小写等价），
+/// 必须在真正执行任何 journal 恢复之前统一校验。
+fn ensure_journal_paths_outside_patch_dir(
+    patch_dir: &Path,
+    entries: &[JournalEntry],
+) -> anyhow::Result<()> {
+    let patch_abs = std::path::absolute(patch_dir)?;
+    let ensure = |path: &Path| -> anyhow::Result<()> {
+        if logical_path_within(path, &patch_abs) {
+            anyhow::bail!(
+                "{}",
+                t!(
+                    "journal.path-in-patch-dir",
+                    path.display(),
+                    patch_dir.display()
+                )
+            );
+        }
+        Ok(())
+    };
+    for entry in entries {
+        match entry {
+            JournalEntry::Patched { target }
+            | JournalEntry::Added { target, .. }
+            | JournalEntry::Deleted { target }
+            | JournalEntry::DeletedDir { target } => ensure(target)?,
+            JournalEntry::RenamedPatched { source, target, .. } => {
+                ensure(source)?;
+                ensure(target)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn do_journal_rollback(
     entries: Vec<JournalEntry>,
     base_dir: &Path,
+    patch_dir: &Path,
     backup_root: &Path,
     journal_path: &Path,
 ) -> anyhow::Result<()> {
+    ensure_journal_paths_outside_patch_dir(patch_dir, &entries)?;
     let journal = ChangeJournal {
         entries,
         base_dir: base_dir.to_path_buf(),
@@ -309,6 +348,7 @@ pub fn rollback_from_journal(base_dir: &Path, patch_dir: &Path) -> anyhow::Resul
     do_journal_rollback(
         entries,
         base_dir,
+        patch_dir,
         &checked_backup_root_dir(patch_dir)?,
         &journal_path,
     )
@@ -362,6 +402,7 @@ fn handle_interrupted_apply(base_dir: &Path, patch_dir: &Path) -> anyhow::Result
     do_journal_rollback(
         entries,
         base_dir,
+        patch_dir,
         &backup_root_dir(patch_dir),
         &journal_path,
     )?;
