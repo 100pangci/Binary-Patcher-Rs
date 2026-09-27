@@ -6,7 +6,7 @@ use crate::fs::relative_maps;
 use crate::hash::sha256_of_file;
 use crate::hdiffpatch::{get_diff_thread_count, run_hdiffz, run_hdiffz_mem, run_hdiffz_stream};
 use crate::manifest::{AddedEntry, ChangedEntry, DeletedEntry, INSTRUCTIONS_NAME, Manifest};
-use crate::patch::patch_dir_for_name;
+use crate::patch::{DEFAULT_PATCH_DIR_NAME, patch_dir_for_name};
 use crate::path::ensure_parent_dir;
 use crate::t;
 use anyhow::Context;
@@ -36,17 +36,74 @@ pub fn build_patch_bundle_with_name(
     crate::path::ensure_no_symlink_components(&old_dir)?;
     crate::path::ensure_no_symlink_components(&new_dir)?;
     crate::path::ensure_no_symlink_components(&patch_dir)?;
-    if patch_dir.exists() {
-        eprintln!("{}", t!("bundle.will-clear-patch", patch_dir.display()));
-        std::fs::remove_dir_all(&patch_dir)?;
-    }
-    std::fs::create_dir_all(&patch_dir)?;
 
-    let (old_files, old_dirs) = relative_maps(&old_dir);
-    let (new_files, new_dirs) = relative_maps(&new_dir);
-
+    // 所有 preflight 校验（file-map、路径等）必须在改动正式 Patch 之前完成。
     let file_map = crate::file_map::load_file_map(base_dir)?.unwrap_or_default();
     crate::file_map::validate_file_map(&file_map, &old_dir, &new_dir)?;
+
+    // 完整生成到临时 staging 目录，成功后再替换正式 Patch：
+    // 任何失败都只清理 staging，上一份有效 Patch 保持不变。
+    let staging_dir = staging_dir_for(&patch_dir);
+    crate::path::ensure_no_symlink_components(&staging_dir)?;
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir)?;
+    }
+    std::fs::create_dir_all(&staging_dir)?;
+
+    let patch_dir_name = patch_dir.file_name().map_or_else(
+        || DEFAULT_PATCH_DIR_NAME.to_string(),
+        |name| name.to_string_lossy().to_string(),
+    );
+    let counts = match build_bundle_into(
+        &staging_dir,
+        &old_dir,
+        &new_dir,
+        &patch_dir_name,
+        &file_map,
+        &mode,
+        format,
+    ) {
+        Ok(counts) => counts,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = replace_patch_dir(&patch_dir, &staging_dir) {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+
+    println!("\n{}", t!("bundle.complete"));
+    println!("{}", t!("bundle.changed-count", counts.changed));
+    println!("{}", t!("bundle.added-count", counts.added));
+    println!("{}", t!("bundle.deleted-count", counts.deleted));
+    println!("{}", t!("bundle.deleted-dir-count", counts.deleted_dirs));
+    println!("{}", t!("bundle.output-dir", patch_dir.display()));
+
+    Ok(())
+}
+
+struct BundleCounts {
+    changed: usize,
+    added: usize,
+    deleted: usize,
+    deleted_dirs: usize,
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn build_bundle_into(
+    patch_dir: &Path,
+    old_dir: &Path,
+    new_dir: &Path,
+    patch_dir_name: &str,
+    file_map: &FileMap,
+    mode: &PatchMode,
+    format: PatchFormat,
+) -> anyhow::Result<BundleCounts> {
+    let (old_files, old_dirs) = relative_maps(old_dir);
+    let (new_files, new_dirs) = relative_maps(new_dir);
 
     let fast_format = matches!(format, PatchFormat::Fast);
 
@@ -68,7 +125,7 @@ pub fn build_patch_bundle_with_name(
     println!("{}", t!("bundle.scanning"));
 
     // Step 1: 先处理显式映射，生成 mapping-aware diff。
-    let mappings = resolve_mappings(&file_map, &old_files, &new_files)?;
+    let mappings = resolve_mappings(file_map, &old_files, &new_files)?;
     let mut mapped_old_keys: BTreeSet<String> = BTreeSet::new();
     let mut mapped_new_keys: BTreeSet<String> = BTreeSet::new();
     for mapping in &mappings {
@@ -137,17 +194,18 @@ pub fn build_patch_bundle_with_name(
             renamed: true,
             delete_source: mapping.delete_source,
         };
-        if let Some(entry) = process_changed(&task, fast_format, &mode)? {
+        if let Some(entry) = process_changed(&task, fast_format, mode)? {
             manifest.changed.push(entry);
             changed_count += 1;
         }
     }
 
-    // Windows 下同一路径仅大小写不同的普通文件会被扫描误判为 deleted + added：
-    // apply 会先写入新路径（同一物理文件），再按旧路径删除，最终删掉刚写入的文件。
-    // 映射路径（源与目标）已由比较键单独处理，其余情况在扫描阶段直接拒绝；
-    // 暂不支持 case-only rename，请统一 Old/New 中的路径大小写。
-    #[cfg(windows)]
+    // Windows / macOS 下（默认大小写不敏感）同一路径仅大小写不同的普通文件
+    // 会被扫描误判为 deleted + added：apply 会先写入新路径（同一物理文件），
+    // 再按旧路径删除，最终删掉刚写入的文件。映射路径（源与目标）已由比较键
+    // 单独处理，其余情况在扫描阶段直接拒绝；暂不支持 case-only rename，
+    // 请统一 Old/New 中的路径大小写。
+    #[cfg(any(windows, target_os = "macos"))]
     for old_rel in old_files.keys() {
         let old_key = comparison_key(old_rel);
         if mapped_old_keys.contains(&old_key) || mapped_new_keys.contains(&old_key) {
@@ -187,7 +245,7 @@ pub fn build_patch_bundle_with_name(
                     renamed: false,
                     delete_source: false,
                 };
-                match process_changed(&task, fast_format, &mode)? {
+                match process_changed(&task, fast_format, mode)? {
                     Some(entry) => {
                         manifest.changed.push(entry);
                         changed_count += 1;
@@ -236,17 +294,59 @@ pub fn build_patch_bundle_with_name(
         .deleted_dirs
         .sort_by(|a, b| b.len().cmp(&a.len()).then(b.cmp(a)));
 
-    manifest.save(&patch_dir)?;
-    write_patch_instructions(&patch_dir)?;
+    manifest.save(patch_dir)?;
+    write_patch_instructions(patch_dir, patch_dir_name)?;
 
-    println!("\n{}", t!("bundle.complete"));
-    println!("{}", t!("bundle.changed-count", changed_count));
-    println!("{}", t!("bundle.added-count", added_count));
-    println!("{}", t!("bundle.deleted-count", deleted_count));
-    println!("{}", t!("bundle.deleted-dir-count", deleted_dirs_count));
-    println!("{}", t!("bundle.output-dir", patch_dir.display()));
+    Ok(BundleCounts {
+        changed: changed_count,
+        added: added_count,
+        deleted: deleted_count,
+        deleted_dirs: deleted_dirs_count,
+    })
+}
 
-    Ok(())
+/// staging 目录：正式 Patch 的同级隐藏目录，构建失败可整体丢弃。
+fn staging_dir_for(patch_dir: &Path) -> PathBuf {
+    patch_dir.with_file_name(staging_name(patch_dir, "staging"))
+}
+
+/// 替换使用的暂存目录：先将旧 Patch 改名到此处，再换入新 Patch。
+fn retired_dir_for(patch_dir: &Path) -> PathBuf {
+    patch_dir.with_file_name(staging_name(patch_dir, "retired"))
+}
+
+fn staging_name(patch_dir: &Path, suffix: &str) -> String {
+    let name = patch_dir.file_name().map_or_else(
+        || DEFAULT_PATCH_DIR_NAME.to_string(),
+        |n| n.to_string_lossy().to_string(),
+    );
+    format!(".{name}.{suffix}")
+}
+
+/// 用 staging 目录替换正式 Patch；失败时尽力恢复旧 Patch。
+fn replace_patch_dir(patch_dir: &Path, staging_dir: &Path) -> anyhow::Result<()> {
+    if !patch_dir.exists() {
+        std::fs::rename(staging_dir, patch_dir)?;
+        return Ok(());
+    }
+
+    eprintln!("{}", t!("bundle.will-clear-patch", patch_dir.display()));
+    let retired_dir = retired_dir_for(patch_dir);
+    crate::path::ensure_no_symlink_components(&retired_dir)?;
+    if retired_dir.exists() {
+        std::fs::remove_dir_all(&retired_dir)?;
+    }
+    std::fs::rename(patch_dir, &retired_dir)?;
+    match std::fs::rename(staging_dir, patch_dir) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&retired_dir);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::rename(&retired_dir, patch_dir);
+            Err(error.into())
+        }
+    }
 }
 
 struct ResolvedMapping {
@@ -426,11 +526,7 @@ fn print_patch_result(
     Ok(())
 }
 
-fn write_patch_instructions(patch_dir: &Path) -> anyhow::Result<()> {
-    let patch_dir_name = patch_dir.file_name().map_or_else(
-        || "Patch".to_string(),
-        |name| name.to_string_lossy().to_string(),
-    );
+fn write_patch_instructions(patch_dir: &Path, patch_dir_name: &str) -> anyhow::Result<()> {
     let lines = [
         "This is an auto-generated patch bundle by binary_patcher.".to_string(),
         String::new(),

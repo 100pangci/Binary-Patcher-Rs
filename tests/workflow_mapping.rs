@@ -1079,7 +1079,7 @@ fn test_rollback_mapping_without_apply_is_rejected() {
 
     let err = binary_patcher::rollback::rollback_bundle(&game).unwrap_err();
     assert!(
-        err.to_string().contains("rollback.mapping-not-applied"),
+        err.to_string().contains("rollback.not-applied"),
         "unexpected error: {err}"
     );
     assert_eq!(
@@ -1176,10 +1176,74 @@ fn test_rollback_mapping_with_marker_and_journal_clears_both() {
 }
 
 // ===========================================================================
-// Windows case-insensitive matching consistency (comparison key)
+// Bundle staging: a failed build must not destroy the previous patch
 // ===========================================================================
 
-#[cfg(windows)]
+#[test]
+fn test_failed_bundle_preflight_keeps_previous_valid_patch() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.pak", b"old payload");
+    write_file(base, "New", "foo.pak", b"new payload changed");
+    build_bundle(base);
+
+    let patch_dir = base.join("Patch");
+    let manifest_before = std::fs::read(patch_dir.join("manifest.json")).unwrap();
+    let patch_before = std::fs::read(patch_dir.join("foo.pak.patch")).unwrap();
+
+    // 第二次构建 preflight 失败（file-map 指向不存在的文件）：旧 Patch 必须原样保留。
+    write_mapping_file(base, &[("missing.aos", "foo.chs")]);
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("filemap.old-not-found"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read(patch_dir.join("manifest.json")).unwrap(),
+        manifest_before
+    );
+    assert_eq!(
+        std::fs::read(patch_dir.join("foo.pak.patch")).unwrap(),
+        patch_before
+    );
+    assert!(!base.join(".Patch.staging").exists());
+    assert!(!base.join(".Patch.retired").exists());
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn test_failed_bundle_mid_build_keeps_previous_valid_patch() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.bin", b"payload before");
+    write_file(base, "New", "foo.bin", b"payload after");
+    build_bundle(base);
+
+    let patch_dir = base.join("Patch");
+    let manifest_before = std::fs::read(patch_dir.join("manifest.json")).unwrap();
+
+    // 大小写变更在 staging 构建阶段才被拒绝（晚于 preflight），旧 Patch 必须保留。
+    std::fs::remove_file(base.join("New/foo.bin")).unwrap();
+    write_file(base, "New", "FOO.bin", b"payload after");
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("bundle.case-only-change"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read(patch_dir.join("manifest.json")).unwrap(),
+        manifest_before
+    );
+    assert!(!base.join(".Patch.staging").exists());
+}
+
+// ===========================================================================
+// Case-insensitive matching consistency (Windows / macOS comparison key)
+// ===========================================================================
+
+#[cfg(any(windows, target_os = "macos"))]
 #[test]
 fn test_bundle_rejects_case_only_path_change() {
     let root = tempfile::tempdir().unwrap();

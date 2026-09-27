@@ -19,30 +19,22 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     let manifest = Manifest::load(patch_dir)?;
     let backup_root = checked_backup_root_dir(patch_dir)?;
 
-    // 含 mapping 的 manifest：未应用过时回滚会先删除 target、再尝试找 backup，
-    // 存在数据丢失风险。有 journal 走崩溃恢复；有有效应用标记才允许正常回滚；
-    // 两者都没有则直接拒绝，且不修改任何文件。
-    if manifest
-        .changed
-        .iter()
-        .any(crate::manifest::ChangedEntry::is_renamed)
-    {
-        let journal_path = resolve_safe_path(patch_dir, crate::apply::JOURNAL_FILE_NAME)?;
-        crate::path::ensure_no_symlink_components(&journal_path)?;
-        if journal_path.exists() {
-            crate::apply::rollback_from_journal(base_dir, patch_dir)?;
-            // apply 已完成、marker 已写入但 journal 尚未删除时崩溃：
-            // 恢复成功后一并清除残留 marker，否则会阻止再次 apply。
-            // marker 不存在时安全忽略。
-            crate::patch::remove_applied_marker(patch_dir)?;
-            return Ok(());
-        }
-        if crate::patch::load_applied_marker(patch_dir)?.is_none() {
-            anyhow::bail!(
-                "{}",
-                t!("rollback.mapping-not-applied", patch_dir.display())
-            );
-        }
+    // 统一保护规则（适用于所有 patch，而非仅 mapping）：
+    // - 存在 journal：apply 中途崩溃，按 journal 做精准恢复；
+    // - 无 journal 且无有效应用标记：从未 Apply 过（或标记无效），
+    //   按完整 manifest 回滚会误删/误改用户的现有文件，直接拒绝且不修改任何文件。
+    let journal_path = resolve_safe_path(patch_dir, crate::apply::JOURNAL_FILE_NAME)?;
+    crate::path::ensure_no_symlink_components(&journal_path)?;
+    if journal_path.exists() {
+        crate::apply::rollback_from_journal(base_dir, patch_dir)?;
+        // apply 已完成、marker 已写入但 journal 尚未删除时崩溃：
+        // 恢复成功后一并清除残留 marker，否则会阻止再次 apply。
+        // marker 不存在时安全忽略。
+        crate::patch::remove_applied_marker(patch_dir)?;
+        return Ok(());
+    }
+    if crate::patch::load_applied_marker(patch_dir)?.is_none() {
+        anyhow::bail!("{}", t!("rollback.not-applied", patch_dir.display()));
     }
 
     let changed = &manifest.changed;

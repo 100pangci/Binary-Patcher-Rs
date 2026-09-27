@@ -120,18 +120,18 @@ fn looks_absolute(unified: &str) -> bool {
     bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
 }
 
-/// 统一的大小写不敏感比较键（Windows 下 ASCII 小写化）。
+/// 统一的大小写不敏感比较键（Windows 与 macOS 下 ASCII 小写化）。
 ///
 /// 仅用于匹配/排除/去重，实际文件访问必须使用真实路径。
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn comparison_key(relative: &str) -> String {
     relative.to_ascii_lowercase()
 }
 
-/// 统一的大小写不敏感比较键（非 Windows 保持原样）。
+/// 统一的大小写不敏感比较键（其他平台保持原样）。
 ///
 /// 仅用于匹配/排除/去重，实际文件访问必须使用真实路径。
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn comparison_key(relative: &str) -> String {
     relative.to_string()
 }

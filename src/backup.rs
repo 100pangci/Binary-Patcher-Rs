@@ -13,21 +13,40 @@ pub fn checked_backup_root_dir(patch_dir: &Path) -> anyhow::Result<PathBuf> {
     Ok(backup_root)
 }
 
+/// 流式备份文件：绝不把整个文件读入内存，适合大文件。
 pub fn create_backup(
     target_path: &Path,
     base_dir: &Path,
     backup_root: &Path,
 ) -> anyhow::Result<PathBuf> {
-    let data = std::fs::read(target_path)?;
-    write_backup(&data, target_path, base_dir, backup_root)
+    let mut source = std::fs::File::open(target_path)?;
+    let (mut backup_file, backup_path) = open_backup_file(target_path, base_dir, backup_root)?;
+    if let Err(error) = std::io::copy(&mut source, &mut backup_file) {
+        drop(backup_file);
+        let _ = std::fs::remove_file(&backup_path);
+        return Err(error.into());
+    }
+    Ok(backup_path)
 }
 
+/// 从内存数据写备份（小文件快速路径）。
 pub fn write_backup(
     data: &[u8],
     target_path: &Path,
     base_dir: &Path,
     backup_root: &Path,
 ) -> anyhow::Result<PathBuf> {
+    let (mut backup_file, backup_path) = open_backup_file(target_path, base_dir, backup_root)?;
+    std::io::Write::write_all(&mut backup_file, data)?;
+    Ok(backup_path)
+}
+
+/// 在备份目录中创建唯一的备份文件（处理重名重试），返回文件句柄与路径。
+fn open_backup_file(
+    target_path: &Path,
+    base_dir: &Path,
+    backup_root: &Path,
+) -> anyhow::Result<(std::fs::File, PathBuf)> {
     let file_name = target_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -53,10 +72,7 @@ pub fn write_backup(
             .write(true)
             .open(&backup_path)
         {
-            Ok(mut f) => {
-                std::io::Write::write_all(&mut f, data)?;
-                return Ok(backup_path);
-            }
+            Ok(f) => return Ok((f, backup_path)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 retry += 1;
                 if retry >= max_retries {

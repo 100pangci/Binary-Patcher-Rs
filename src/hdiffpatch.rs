@@ -143,6 +143,50 @@ fn run_hdiffz_stream_forced(
     run_hdiffz_stream(old_file, new_file, patch_file, thread_count, true)
 }
 
+/// 应用补丁时是否应直接走流式路径（不把旧文件读入内存、不把输出读回内存）。
+///
+/// 判定依据与 [`apply_patch_auto`] 的内存模式阈值完全一致，
+/// 供 apply 侧在读文件之前决定使用哪条路径。
+pub fn should_stream_apply(old_size: u64, new_size: u64) -> bool {
+    old_size.saturating_add(new_size) > MAX_MEM_DIFF_BYTES
+}
+
+/// 解析补丁头获取输出大小。
+pub fn patch_output_size(patch_data: &[u8]) -> anyhow::Result<u64> {
+    ffi::patch_new_size(patch_data)
+        .map(|size| size as u64)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// 大文件低内存 apply：以文件为输入直接写出输出文件，
+/// 输出绝不读回内存（校验由调用方使用 `sha256_of_file` 流式完成）。
+pub fn apply_patch_stream(
+    old_file: &Path,
+    patch_data: &[u8],
+    output_file: &Path,
+    thread_count: u32,
+) -> anyhow::Result<()> {
+    crate::path::ensure_no_symlink_components(old_file)?;
+    crate::path::ensure_parent_dir(output_file)?;
+
+    let new_size = ffi::patch_new_size(patch_data).map_err(|e| anyhow::anyhow!("{e}"))?;
+    if new_size == 0 {
+        std::fs::write(output_file, [])?;
+        return Ok(());
+    }
+
+    match ffi::apply_patch_file(old_file, patch_data, output_file, thread_count) {
+        Ok(()) => Ok(()),
+        Err(e) if e.is_oom() => Err(anyhow::anyhow!("{e}")),
+        Err(e) if thread_count > 1 => {
+            eprintln!("{}", t!("hdiff.mt-fallback", e));
+            ffi::apply_patch_file(old_file, patch_data, output_file, 1)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        Err(e) => Err(anyhow::anyhow!("{e}")),
+    }
+}
+
 pub fn apply_patch_auto(
     old_data: Vec<u8>,
     old_file: &Path,
@@ -226,10 +270,15 @@ pub fn run_hpatchz(old_file: &Path, patch_file: &Path, output_file: &Path) -> an
     let thread_count = get_recommended_thread_count();
     crate::path::ensure_no_symlink_components(old_file)?;
     crate::path::ensure_no_symlink_components(patch_file)?;
-    let old_data = std::fs::read(old_file)
-        .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-old-failed", old_file.display(), e)))?;
     let patch_data = std::fs::read(patch_file)
         .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-new-failed", patch_file.display(), e)))?;
+    let new_size = patch_output_size(&patch_data)?;
+    let old_size = std::fs::metadata(old_file)?.len();
+    if should_stream_apply(old_size, new_size) {
+        return apply_patch_stream(old_file, &patch_data, output_file, thread_count);
+    }
+    let old_data = std::fs::read(old_file)
+        .map_err(|e| anyhow::anyhow!("{}", t!("ffi.read-old-failed", old_file.display(), e)))?;
     apply_patch_auto(old_data, old_file, patch_data, output_file, thread_count)?;
     Ok(())
 }

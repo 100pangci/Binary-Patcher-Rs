@@ -81,14 +81,7 @@ fn test_full_workflow() {
         "directory deep/nested/ should have been removed"
     );
 
-    // A stale journal must be cleaned up by rollback as well
-    std::fs::write(
-        game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME),
-        r#"[{"type":"patched","path":"config.ini"}]"#,
-    )
-    .unwrap();
-
-    // Rollback
+    // Rollback（成功 apply 后无 journal，凭有效 marker 走完整 manifest 回滚）
     binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
 
     assert!(
@@ -126,6 +119,299 @@ fn test_full_workflow() {
         game_dir.join("deep/nested/old_cache.tmp").exists(),
         "file deep/nested/old_cache.tmp should be restored after rollback"
     );
+}
+
+// ===========================================================================
+// Rollback guard for ordinary (non-mapping) patches
+// ===========================================================================
+
+#[test]
+fn test_rollback_plain_patch_without_apply_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    // 未 Apply 就 rollback：必须拒绝，且不修改任何文件（changed/added/deleted 均覆盖）。
+    let err = binary_patcher::rollback::rollback_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("rollback.not-applied"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(
+        !game_dir.join("new_file.dll").exists(),
+        "added file must not appear on a rejected rollback"
+    );
+    assert!(
+        game_dir.join("deprecated.log").exists(),
+        "deleted file must not be touched on a rejected rollback"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists()
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists()
+    );
+}
+
+#[test]
+fn test_rollback_plain_patch_with_journal_uses_crash_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+    assert!(game_patch.join(".applied_patch.json").exists());
+
+    // 模拟 apply 已写 marker、journal 残留：回滚必须走 journal 精准恢复，
+    // 而不是按完整 manifest 回滚。
+    std::fs::write(
+        game_patch.join(binary_patcher::apply::JOURNAL_FILE_NAME),
+        r#"[{"type":"patched","path":"config.ini"}]"#,
+    )
+    .unwrap();
+
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n",
+        "journal recovery must restore the patched file"
+    );
+    assert!(
+        game_dir.join("new_file.dll").exists(),
+        "manifest rollback must not run when a journal is present"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "journal must be removed after recovery"
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists(),
+        "residual marker must be cleared after journal recovery"
+    );
+}
+
+// ===========================================================================
+// Deleted files: missing / hash mismatch must abort and roll back
+// ===========================================================================
+
+#[test]
+fn test_apply_deleted_missing_file_aborts_and_rolls_back() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    // 删除 manifest 声明的文件，apply 必须报错而不是静默跳过。
+    std::fs::remove_file(game_dir.join("deprecated.log")).unwrap();
+
+    let err = binary_patcher::apply::apply_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.deleted-missing"),
+        "unexpected error: {err}"
+    );
+
+    // 事务回滚：changed 恢复、added 清除。
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(!game_dir.join("new_file.dll").exists());
+    assert!(
+        !game_patch
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists()
+    );
+    assert!(
+        !game_patch
+            .join(binary_patcher::patch::APPLIED_MARKER_FILE_NAME)
+            .exists()
+    );
+}
+
+#[test]
+fn test_apply_deleted_file_sha_mismatch_aborts_and_rolls_back() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+    build_workspace(&base_dir);
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    let game_patch = game_dir.join("Patch");
+    copy_tree_files(&base_dir.join("Patch"), &game_patch);
+
+    // 用户修改了 manifest 声明删除的文件：必须以 SHA256 不匹配报错。
+    std::fs::write(game_dir.join("deprecated.log"), "tampered by user").unwrap();
+
+    let err = binary_patcher::apply::apply_bundle(&game_dir).unwrap_err();
+    assert!(
+        err.to_string().contains("apply.deleted-sha-mismatch"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("deprecated.log")).unwrap(),
+        "tampered by user",
+        "mismatching file must be left untouched"
+    );
+    assert_eq!(
+        std::fs::read_to_string(game_dir.join("config.ini")).unwrap(),
+        "[section]\nkey=old\n"
+    );
+    assert!(!game_dir.join("new_file.dll").exists());
+    assert!(
+        game_dir.join("deep/nested/old_cache.tmp").exists(),
+        "previously deleted files must be restored by the transaction rollback"
+    );
+}
+
+// ===========================================================================
+// Deleted directories: only empty directories are removed
+// ===========================================================================
+
+#[test]
+fn test_apply_keeps_non_empty_deleted_dir_with_user_file() {
+    let root = tempfile::tempdir().unwrap();
+    let base_dir = root.path().to_path_buf();
+
+    std::fs::create_dir_all(base_dir.join("Old/removed")).unwrap();
+    std::fs::create_dir_all(base_dir.join("New")).unwrap();
+    std::fs::write(base_dir.join("Old/removed/declared.tmp"), b"declared").unwrap();
+    std::fs::write(base_dir.join("New/keep.txt"), b"kept").unwrap();
+
+    binary_patcher::bundle::build_patch_bundle(
+        &base_dir,
+        binary_patcher::cli::PatchMode::Memory,
+        binary_patcher::cli::PatchFormat::Precise,
+    )
+    .unwrap();
+    let manifest = binary_patcher::manifest::Manifest::load(&base_dir.join("Patch")).unwrap();
+    assert!(
+        manifest
+            .deleted
+            .iter()
+            .any(|e| e.path == "removed/declared.tmp")
+    );
+    assert!(manifest.deleted_dirs.iter().any(|d| d == "removed"));
+
+    let game_dir = base_dir.join("game");
+    copy_tree_files(&base_dir.join("Old"), &game_dir);
+    copy_tree_files(&base_dir.join("Patch"), &game_dir.join("Patch"));
+    // manifest 未声明的用户文件：目录非空，必须保留。
+    std::fs::write(game_dir.join("removed/user_note.txt"), b"user data").unwrap();
+
+    binary_patcher::apply::apply_bundle(&game_dir).unwrap();
+
+    assert!(
+        !game_dir.join("removed/declared.tmp").exists(),
+        "declared deleted file must be removed"
+    );
+    assert!(game_dir.join("removed").is_dir(), "directory must be kept");
+    assert_eq!(
+        std::fs::read(game_dir.join("removed/user_note.txt")).unwrap(),
+        b"user data",
+        "undeclared user file must never be deleted"
+    );
+
+    binary_patcher::rollback::rollback_bundle(&game_dir).unwrap();
+    assert_eq!(
+        std::fs::read(game_dir.join("removed/declared.tmp")).unwrap(),
+        b"declared",
+        "rollback must restore the declared deleted file"
+    );
+    assert_eq!(
+        std::fs::read(game_dir.join("removed/user_note.txt")).unwrap(),
+        b"user data"
+    );
+}
+
+// ===========================================================================
+// Streaming apply helper (large-file path)
+// ===========================================================================
+
+#[test]
+fn test_apply_patch_stream_writes_output_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.bin");
+    let new_path = dir.path().join("new.bin");
+    let patch_path = dir.path().join("patch.hdiff");
+    let output_path = dir.path().join("output.bin");
+
+    let mut old_data = vec![0u8; 256 * 1024];
+    for (i, byte) in old_data.iter_mut().enumerate() {
+        *byte = (i % 251) as u8;
+    }
+    let mut new_data = old_data.clone();
+    new_data.extend_from_slice(b"streamed tail");
+    new_data[1024..2048].fill(0xAB);
+    std::fs::write(&old_path, &old_data).unwrap();
+    std::fs::write(&new_path, &new_data).unwrap();
+
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &new_path, &patch_path, true).unwrap();
+    let patch_data = std::fs::read(&patch_path).unwrap();
+    binary_patcher::hdiffpatch::apply_patch_stream(&old_path, &patch_data, &output_path, 2)
+        .unwrap();
+    assert_eq!(std::fs::read(&output_path).unwrap(), new_data);
+
+    // 空输出同样走流式路径。
+    let empty_new = dir.path().join("empty.bin");
+    std::fs::write(&empty_new, []).unwrap();
+    let empty_patch = dir.path().join("empty.hdiff");
+    binary_patcher::hdiffpatch::run_hdiffz(&old_path, &empty_new, &empty_patch, true).unwrap();
+    let empty_patch_data = std::fs::read(&empty_patch).unwrap();
+    binary_patcher::hdiffpatch::apply_patch_stream(&old_path, &empty_patch_data, &output_path, 2)
+        .unwrap();
+    assert_eq!(std::fs::read(&output_path).unwrap(), b"");
 }
 
 // ===========================================================================

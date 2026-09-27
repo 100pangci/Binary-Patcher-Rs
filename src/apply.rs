@@ -3,7 +3,9 @@ use crate::backup::{
 };
 use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
-use crate::hdiffpatch::{apply_patch_auto, run_hpatchz};
+use crate::hdiffpatch::{
+    apply_patch_auto, apply_patch_stream, patch_output_size, run_hpatchz, should_stream_apply,
+};
 use crate::manifest::{ChangedEntry, Manifest};
 use crate::path::{ensure_parent_dir, resolve_safe_path};
 use crate::t;
@@ -479,7 +481,7 @@ fn apply_changed_files(
         let renamed = item.is_renamed();
         let patch_file = resolve_safe_path(patch_dir, &item.patch_file)?;
 
-        if !source_path.exists() {
+        if !source_path.is_file() {
             eprintln!("{}", t!("apply.missing-old", source_path.display()));
             eprintln!("{}", t!("apply.missing-hint", idx, total));
             eprintln!("{}", t!("apply.missing-hint-restore"));
@@ -489,15 +491,29 @@ fn apply_changed_files(
             )
         }
 
-        let old_data = std::fs::read(&source_path).map_err(|e| {
-            anyhow::anyhow!(
-                "{} {}",
-                t!("bundle.failed-read-old", source_path.display()),
-                e
-            )
-        })?;
+        let patch_data = std::fs::read(&patch_file)
+            .map_err(|e| anyhow::anyhow!("{}: {}", patch_file.display(), e))?;
 
-        let current_hash = sha256_of_bytes(&old_data);
+        // 先按文件大小决定内存 / 流式路径，大文件绝不整读进内存：
+        // 校验用 sha256_of_file，apply 用文件到文件，输出用 sha256_of_file。
+        let new_size = patch_output_size(&patch_data)?;
+        let source_size = std::fs::metadata(&source_path)?.len();
+        let old_data = if should_stream_apply(source_size, new_size) {
+            None
+        } else {
+            Some(std::fs::read(&source_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "{} {}",
+                    t!("bundle.failed-read-old", source_path.display()),
+                    e
+                )
+            })?)
+        };
+
+        let current_hash = match &old_data {
+            Some(data) => sha256_of_bytes(data),
+            None => sha256_of_file(&source_path)?,
+        };
         if current_hash != item.old_sha256 {
             eprintln!("{}", t!("apply.sha256-mismatch", source_relative));
             eprintln!("{}", t!("apply.sha256-current", current_hash));
@@ -509,17 +525,20 @@ fn apply_changed_files(
         if renamed {
             apply_renamed_change(
                 base_dir,
-                &patch_file,
                 item,
                 &source_path,
                 &target_path,
                 old_data,
+                patch_data,
                 journal,
             )?;
             continue;
         }
 
-        let backup_path = write_backup(&old_data, &source_path, base_dir, &journal.backup_root)?;
+        let backup_path = match &old_data {
+            Some(data) => write_backup(data, &source_path, base_dir, &journal.backup_root)?,
+            None => create_backup(&source_path, base_dir, &journal.backup_root)?,
+        };
         let backup_name = backup_path
             .file_name()
             .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
@@ -530,20 +549,18 @@ fn apply_changed_files(
             target: target_path.clone(),
         })?;
 
-        let patch_data = std::fs::read(&patch_file)
-            .map_err(|e| anyhow::anyhow!("{}: {}", patch_file.display(), e))?;
-
         let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
-        let new_data = apply_patch_auto(
-            old_data,
-            &backup_path,
-            patch_data,
-            &target_path,
-            thread_count,
-        )?;
-
-        let new_hash = sha256_of_bytes(&new_data);
+        // 流式路径以备份文件作为差分输入：source 与 target 同路径时，
+        // output 截断不会破坏尚未读取的输入。
+        let new_hash = if let Some(data) = old_data {
+            let new_data =
+                apply_patch_auto(data, &backup_path, patch_data, &target_path, thread_count)?;
+            sha256_of_bytes(&new_data)
+        } else {
+            apply_patch_stream(&backup_path, &patch_data, &target_path, thread_count)?;
+            sha256_of_file(&target_path)?
+        };
         if new_hash != item.new_sha256 {
             if let Err(be) = restore_backup(&target_path, base_dir, &journal.backup_root) {
                 anyhow::bail!(
@@ -572,11 +589,11 @@ fn apply_changed_files(
 /// 此时先备份再覆盖；回滚时删除/恢复目标。
 fn apply_renamed_change(
     base_dir: &Path,
-    patch_file: &Path,
     item: &ChangedEntry,
     source_path: &Path,
     target_path: &Path,
-    old_data: Vec<u8>,
+    old_data: Option<Vec<u8>>,
+    patch_data: Vec<u8>,
     journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
     println!(
@@ -608,7 +625,10 @@ fn apply_renamed_change(
     // delete_source=true 时先落盘 source 备份，再写 journal：
     // 无论之后在哪一步中断，rollback 都能恢复 source。
     if item.delete_source {
-        let source_backup = write_backup(&old_data, source_path, base_dir, &journal.backup_root)?;
+        let source_backup = match &old_data {
+            Some(data) => write_backup(data, source_path, base_dir, &journal.backup_root)?,
+            None => create_backup(source_path, base_dir, &journal.backup_root)?,
+        };
         let source_backup_name = source_backup
             .file_name()
             .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
@@ -622,14 +642,15 @@ fn apply_renamed_change(
         delete_source: item.delete_source,
     })?;
 
-    let patch_data = std::fs::read(patch_file)
-        .map_err(|e| anyhow::anyhow!("{}: {}", patch_file.display(), e))?;
-
     let thread_count = crate::hdiffpatch::get_recommended_thread_count();
 
-    let new_data = apply_patch_auto(old_data, source_path, patch_data, target_path, thread_count)?;
-
-    let new_hash = sha256_of_bytes(&new_data);
+    let new_hash = if let Some(data) = old_data {
+        let new_data = apply_patch_auto(data, source_path, patch_data, target_path, thread_count)?;
+        sha256_of_bytes(&new_data)
+    } else {
+        apply_patch_stream(source_path, &patch_data, target_path, thread_count)?;
+        sha256_of_file(target_path)?
+    };
     if new_hash != item.new_sha256 {
         // 撤销 target；source 此时尚未删除，保持原样。
         if target_had_backup {
@@ -693,20 +714,31 @@ fn apply_deleted_files(
     manifest: &Manifest,
     journal: &mut ChangeJournal,
 ) -> anyhow::Result<()> {
-    for item in &manifest.deleted {
+    for (idx, item) in manifest.deleted.iter().enumerate() {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
-        if target_path.exists() {
-            let backup_path = create_backup(&target_path, base_dir, &journal.backup_root)?;
-            let backup_name = backup_path
-                .file_name()
-                .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
-            println!("{}", t!("apply.deleted", item.path));
-            println!("{}", t!("apply.backed-up", backup_name));
-            journal.push(JournalEntry::Deleted {
-                target: target_path.clone(),
-            })?;
-            std::fs::remove_file(&target_path)?;
+        // 文件缺失或内容与 manifest 不符都视为补丁不匹配：
+        // 必须报错触发事务回滚，绝不能静默跳过。
+        if !target_path.is_file() {
+            anyhow::bail!("{}", t!("apply.deleted-missing", item.path));
         }
+        let current_hash = sha256_of_file(&target_path)?;
+        if current_hash != item.old_sha256 {
+            eprintln!("{}", t!("apply.sha256-current", current_hash));
+            eprintln!("{}", t!("apply.sha256-expected", item.old_sha256));
+            eprintln!("{}", t!("apply.missing-hint", idx, manifest.deleted.len()));
+            anyhow::bail!("{}", t!("apply.deleted-sha-mismatch", item.path));
+        }
+
+        let backup_path = create_backup(&target_path, base_dir, &journal.backup_root)?;
+        let backup_name = backup_path
+            .file_name()
+            .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
+        println!("{}", t!("apply.deleted", item.path));
+        println!("{}", t!("apply.backed-up", backup_name));
+        journal.push(JournalEntry::Deleted {
+            target: target_path.clone(),
+        })?;
+        std::fs::remove_file(&target_path)?;
     }
     Ok(())
 }
@@ -718,13 +750,20 @@ fn remove_deleted_dirs(
 ) -> anyhow::Result<()> {
     for dir_path in &manifest.deleted_dirs {
         let target_dir = resolve_safe_path(base_dir, dir_path)?;
-        if target_dir.exists() && target_dir.is_dir() {
-            journal.push(JournalEntry::DeletedDir {
-                target: target_dir.clone(),
-            })?;
-            std::fs::remove_dir_all(&target_dir)?;
-            println!("{}", t!("apply.deleted-dir", dir_path));
+        if !target_dir.is_dir() {
+            continue;
         }
+        // 只删除空目录：非空说明目录内还有 manifest 未声明的用户文件，
+        // 保留目录并跳过，绝不能顺带删除额外文件。
+        if std::fs::read_dir(&target_dir)?.next().is_some() {
+            println!("{}", t!("apply.deleted-dir-kept", dir_path));
+            continue;
+        }
+        journal.push(JournalEntry::DeletedDir {
+            target: target_dir.clone(),
+        })?;
+        std::fs::remove_dir(&target_dir)?;
+        println!("{}", t!("apply.deleted-dir", dir_path));
     }
     Ok(())
 }
