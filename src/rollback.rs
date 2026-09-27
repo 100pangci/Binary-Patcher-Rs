@@ -85,7 +85,9 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
                 )
             );
 
-            // 映射补丁不修改源文件，回滚只需撤销 target：
+            // 映射条目的回滚范围取决于 delete_source：
+            // - delete_source=false：source 保留不动，只需撤销/恢复 target；
+            // - delete_source=true：source 已在应用成功后删除，还需从 backup 恢复。
             // 1. 删除补丁生成的 target（应用前 target 不存在时的产物）。
             if target_path.exists() {
                 std::fs::remove_file(&target_path)?;

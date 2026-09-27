@@ -6,7 +6,7 @@
 - **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 作为差分基础文件，为 target 生成二进制差分而非「删除 + 新增」；source 默认原样保留，`delete_source=true` 时在目标校验成功后删除（删除前先备份，rollback 可恢复），apply / rollback / journal 崩溃恢复在需要时一并维护 source 与 target
 - 映射严格校验：空路径、`old == new`、重复 old/new、链式映射（A→B 且 B→C）全部拒绝；文件存在性、`../`、绝对路径、符号链接防护复用现有安全机制
 - 每条映射可选 `delete_source`（默认 `false`）：为 `true` 时在目标生成并通过 SHA256 校验后删除源文件（删除前先备份，rollback 可恢复）
-- 映射路径「比较键」机制：统一 `\`、移除 `.`、折叠重复分隔符，Windows 下大小写不敏感（仅用于比较，实际访问路径保留原始大小写）
+- 映射路径「比较键」机制：统一 `\`、移除 `.`、折叠重复分隔符，Windows / macOS 下大小写不敏感（仅用于比较，实际访问路径保留原始大小写）
 - 扫描阶段检测映射源在 `New` 中内容变化（`Old/data/package.bin != New/data/package.bin`）时直接报错，不再静默忽略
 - 保留的映射源目录链受保护（`protected_dirs`），跨目录映射 `Old/data/package.bin -> New/localized/package_v2.dat` 不会把 `data/` 加入 `deleted_dirs` 而误删 source
 - 已成功应用过的补丁拒绝重复 apply（复用 `.applied_patch.json` 合法性校验），提示先运行 rollback
@@ -15,14 +15,17 @@
 ### Changed
 - **Manifest format 升至 1.4.0**：`ChangedEntry` 增加可选字段 `source_path`。旧 manifest 无该字段时按普通条目正常读取；1.3.x 工具读取 1.4.x manifest 会进入版本不兼容警告/拒绝路径，不会按旧语义静默执行
 - 文件映射的 apply/rollback 语义：默认 `delete_source=false` 时 source 保留、target 单独生成、rollback 只撤销/恢复 target；`delete_source=true` 时 source 仅在目标校验成功后删除，rollback 会从备份恢复 source
-- `delete_source=false` 时 apply 结果满足 `apply(Old) == New`：`New/` 中保留的映射源同名文件保持不变，不再被全量复制为「新增」（`delete_source=true` 时源文件按声明删除）
+- 映射的 apply 语义：target 按映射生成，source 默认额外保留；`New/` 中保留的映射源同名文件保持不变，不再被全量复制为「新增」。`delete_source=true` 时 source 在目标校验成功后删除，不承诺 `apply(Old)` 与 `New/` 严格相等
 
 ### Fixed
-- Manifest / apply 双重校验映射 source 与 target 不能解析到同一实际文件：规范化（`./`、重复分隔符）、Windows 大小写等价与 canonicalize 兜底均拒绝，且检查发生在任何备份 / 写 target / 删 source 之前
-- Windows 下映射的大小写不敏感匹配统一使用 comparison key：`mapped_old` / `mapped_new` 排除、`New` 中映射源存在性与内容变化检测、映射源目录删除判断不再漏判
+- Manifest / apply 双重校验映射 source 与 target 不能解析到同一实际文件：规范化（`./`、重复分隔符）、Windows/macOS 大小写等价与 canonicalize 兜底均拒绝，且检查发生在任何备份 / 写 target / 删 source 之前
+- Windows / macOS 下映射的大小写不敏感匹配统一使用 comparison key：`mapped_old` / `mapped_new` 排除、`New` 中映射源存在性与内容变化检测、映射源目录删除判断不再漏判
 - 包含 mapping 的 manifest 在既无 journal 又无有效 `.applied_patch.json` 时拒绝 rollback（不修改任何文件），避免未应用过就回滚误删 target；有 journal 时仍按崩溃恢复处理
 - marker 与 journal 同时残留（apply 写标记后、删日志前崩溃）时，journal 恢复成功后一并清除 marker，之后可再次 apply
-- Windows 下 `Old` / `New` 出现同一路径仅大小写不同的普通文件时直接拒绝生成补丁，避免被误判为「删除 + 新增」后删掉同一物理文件（暂不支持 case-only rename）
+- Windows / macOS 下 `Old` / `New` 出现同一路径仅大小写不同的普通文件时直接拒绝生成补丁，避免被误判为「删除 + 新增」后删掉同一物理文件（暂不支持 case-only rename）
+- Manifest 跨类别逻辑路径冲突在 `validate()` 阶段整体拒绝：changed 目标、mapping source、added、deleted 之间不得出现同一逻辑路径（含规范化与 Windows/macOS 大小写等价），crafted / 损坏 manifest 无法让不同操作互相踩同一路径
+- Journal 中任何路径（`Patched` / `Added` / `Deleted` / `DeletedDir` / `RenamedPatched` 的 source 与 target）都不得指向补丁目录内部（含 Windows/macOS 大小写变体），校验在真正执行恢复之前统一完成
+- `write_backup()` 写入失败时关闭句柄并删除本次创建的半截备份，返回原错误，半截文件不会被 `find_backup()` 误认为有效备份；大文件 apply 低内存流式路径、rollback 完整 preflight 与先写后换恢复、唯一 staging 目录等事务安全加固一并合入
 
 ## [v1.3.1] — 2026-09-09
 

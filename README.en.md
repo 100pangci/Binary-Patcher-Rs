@@ -212,7 +212,7 @@ Other rules:
   `./` and repeated separators are folded).
 - Validation is strict: both files must exist; one old file cannot map to multiple new files
   and multiple old files cannot map to one new file; `old == new` (including after
-  normalization, or case-only differences on Windows) is rejected with a hint to remove the
+  normalization, or case-only differences on Windows or macOS) is rejected with a hint to remove the
   entry; chained mappings (A→B and B→C) are rejected.
 - If `New/` contains a file with the same path as a mapping source, its content must be
   identical to `Old/`, otherwise the bundle fails (a mapping source is an unchanged diff base).

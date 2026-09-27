@@ -399,7 +399,7 @@ struct ResolvedMapping {
 /// 将 file-map.json 中的用户路径解析为实际扫描到的相对路径。
 ///
 /// 完全匹配优先；其余情况统一使用 [`comparison_key`] 匹配
-/// （Windows 下大小写不敏感），避免因大小写差异漏掉映射。
+/// （Windows/macOS 下大小写不敏感），避免因大小写差异漏掉映射。
 fn resolve_mappings(
     file_map: &FileMap,
     old_files: &BTreeMap<String, PathBuf>,

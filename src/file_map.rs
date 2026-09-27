@@ -43,7 +43,7 @@ pub struct FileMapping {
 ///
 /// - [`MappingPath::relative`]：用于实际文件访问与 manifest 的规范相对路径
 ///   （`/` 分隔、已清理 `.` 与重复分隔符、保留原始大小写）
-/// - [`MappingPath::key`]：仅用于比较/去重的键（Windows 下大小写不敏感），
+/// - [`MappingPath::key`]：仅用于比较/去重的键（Windows/macOS 下大小写不敏感），
 ///   绝不用于文件访问
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MappingPath {
@@ -86,7 +86,7 @@ impl FileMapping {
 /// - 移除 `.` 段、折叠重复分隔符
 /// - 拒绝 `..` 与绝对路径（`/foo`、`C:\foo`、`\\server\share`）
 ///
-/// 比较键在 Windows 下按 ASCII 大小写不敏感生成；实际访问路径保留原始
+/// 比较键在 Windows/macOS 下按 ASCII 大小写不敏感生成；实际访问路径保留原始
 /// 大小写，并继续由 `resolve_safe_path` 做穿越 / 符号链接防护。
 pub fn normalize_mapping_path(raw: &str) -> anyhow::Result<MappingPath> {
     let unified = raw.replace('\\', "/");
@@ -139,7 +139,7 @@ pub fn comparison_key(relative: &str) -> String {
 /// 两个路径字符串是否指向同一逻辑文件。
 ///
 /// 使用 [`normalize_mapping_path`] 的规范化结果与比较键判断，
-/// 因此 `./foo.bin` 与 `foo.bin`、Windows 下仅大小写不同的路径都会被判定为相同。
+/// 因此 `./foo.bin` 与 `foo.bin`、Windows/macOS 下仅大小写不同的路径都会被判定为相同。
 pub fn is_same_logical_path(left: &str, right: &str) -> anyhow::Result<bool> {
     let left = normalize_mapping_path(left)?;
     let right = normalize_mapping_path(right)?;
