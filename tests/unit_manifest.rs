@@ -12,6 +12,7 @@ fn test_valid_manifest() {
         target_root: "New".to_string(),
         changed: vec![binary_patcher::manifest::ChangedEntry {
             path: "a.txt".to_string(),
+            source_path: None,
             old_sha256: "a".repeat(64),
             new_sha256: "b".repeat(64),
             patch_file: "a.txt.patch".to_string(),
@@ -56,6 +57,7 @@ fn test_manifest_rejects_traversal_in_changed_path() {
         target_root: "New".to_string(),
         changed: vec![binary_patcher::manifest::ChangedEntry {
             path: "../escape.txt".to_string(),
+            source_path: None,
             old_sha256: "a".repeat(64),
             new_sha256: "b".repeat(64),
             patch_file: "p.patch".to_string(),
@@ -180,4 +182,112 @@ fn test_version_compat_minor_mismatch() {
         binary_patcher::manifest::VersionCompat::Compatible => panic!("expected incompatible"),
         binary_patcher::manifest::VersionCompat::Incompatible { .. } => {} // ok
     }
+}
+
+// ===========================================================================
+// Rename-aware changed entries / source_path backward compatibility
+// ===========================================================================
+
+#[test]
+fn test_legacy_manifest_without_source_path_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch_dir = dir.path().join("Patch");
+    std::fs::create_dir_all(&patch_dir).unwrap();
+    let manifest = serde_json::json!({
+        "format": env!("CARGO_PKG_VERSION"),
+        "source_root": "Old",
+        "target_root": "New",
+        "changed": [{
+            "path": "data/foo.pak",
+            "old_sha256": "a".repeat(64),
+            "new_sha256": "b".repeat(64),
+            "patch_file": "data/foo.pak.patch"
+        }],
+        "added": [],
+        "deleted": [],
+        "deleted_dirs": []
+    });
+    std::fs::write(
+        patch_dir.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let loaded = Manifest::load(&patch_dir).unwrap();
+    assert_eq!(loaded.changed.len(), 1);
+    assert!(loaded.changed[0].source_path.is_none());
+    assert!(!loaded.changed[0].is_renamed());
+    assert_eq!(loaded.changed[0].old_relative_path(), "data/foo.pak");
+}
+
+#[test]
+fn test_changed_entry_serde_source_path() {
+    let normal = binary_patcher::manifest::ChangedEntry {
+        path: "data/foo.pak".to_string(),
+        source_path: None,
+        old_sha256: "a".repeat(64),
+        new_sha256: "b".repeat(64),
+        patch_file: "data/foo.pak.patch".to_string(),
+    };
+    let json = serde_json::to_string(&normal).unwrap();
+    assert!(
+        !json.contains("source_path"),
+        "normal entry must not serialize source_path: {json}"
+    );
+
+    let renamed = binary_patcher::manifest::ChangedEntry {
+        path: "data/foo.chs".to_string(),
+        source_path: Some("data/foo.pak".to_string()),
+        old_sha256: "a".repeat(64),
+        new_sha256: "b".repeat(64),
+        patch_file: "data/foo.chs.patch".to_string(),
+    };
+    let json = serde_json::to_string(&renamed).unwrap();
+    assert!(json.contains("\"source_path\":\"data/foo.pak\""), "{json}");
+    assert!(renamed.is_renamed());
+    assert_eq!(renamed.old_relative_path(), "data/foo.pak");
+
+    let parsed: binary_patcher::manifest::ChangedEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.source_path.as_deref(), Some("data/foo.pak"));
+}
+
+#[test]
+fn test_manifest_rejects_empty_source_path() {
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![binary_patcher::manifest::ChangedEntry {
+            path: "a.txt".to_string(),
+            source_path: Some(String::new()),
+            old_sha256: "a".repeat(64),
+            new_sha256: "b".repeat(64),
+            patch_file: "a.txt.patch".to_string(),
+        }],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    assert!(manifest.validate().is_err());
+}
+
+#[test]
+fn test_manifest_rejects_duplicate_patch_resource() {
+    let entry = |path: &str| binary_patcher::manifest::ChangedEntry {
+        path: path.to_string(),
+        source_path: None,
+        old_sha256: "a".repeat(64),
+        new_sha256: "b".repeat(64),
+        patch_file: "same.patch".to_string(),
+    };
+    let manifest = Manifest {
+        format: env!("CARGO_PKG_VERSION").to_string(),
+        source_root: "Old".to_string(),
+        target_root: "New".to_string(),
+        changed: vec![entry("a.txt"), entry("b.txt")],
+        added: vec![],
+        deleted: vec![],
+        deleted_dirs: vec![],
+    };
+    assert!(manifest.validate().is_err());
 }

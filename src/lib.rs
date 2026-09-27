@@ -3,6 +3,7 @@ pub mod backup;
 pub mod bundle;
 pub mod cli;
 pub mod ffi;
+pub mod file_map;
 pub mod fmt;
 pub mod fs;
 pub mod hash;

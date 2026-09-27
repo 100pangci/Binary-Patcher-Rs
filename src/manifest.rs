@@ -11,10 +11,31 @@ const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangedEntry {
+    /// 最终目标文件路径（New 侧相对路径）。
     pub path: String,
+
+    /// 显式映射的旧文件路径（Old 侧相对路径）。
+    /// 缺省时表示普通同路径修改，兼容旧 manifest。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+
     pub old_sha256: String,
     pub new_sha256: String,
     pub patch_file: String,
+}
+
+impl ChangedEntry {
+    /// apply / rollback 使用的旧文件相对路径；无映射时与 `path` 相同。
+    pub fn old_relative_path(&self) -> &str {
+        self.source_path.as_deref().unwrap_or(&self.path)
+    }
+
+    /// 该条目是否为显式文件名映射（旧路径与目标路径不同）。
+    pub fn is_renamed(&self) -> bool {
+        self.source_path
+            .as_deref()
+            .is_some_and(|source| source != self.path)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,9 +166,13 @@ impl Manifest {
             anyhow::bail!("{}", t!("manifest.format-invalid", self.format));
         }
 
+        let mut patch_files = std::collections::BTreeSet::new();
         for (idx, item) in self.changed.iter().enumerate() {
             if item.path.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-path-empty", idx));
+            }
+            if item.source_path.as_deref().is_some_and(str::is_empty) {
+                anyhow::bail!("{}", t!("manifest.changed-source-path-empty", idx));
             }
             if item.old_sha256.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-old-sha", idx));
@@ -169,6 +194,12 @@ impl Manifest {
             }
             if item.patch_file.is_empty() {
                 anyhow::bail!("{}", t!("manifest.changed-missing-patch", idx));
+            }
+            if !patch_files.insert(item.patch_file.as_str()) {
+                anyhow::bail!(
+                    "{}",
+                    t!("manifest.changed-duplicate-patch", idx, item.patch_file)
+                );
             }
         }
 

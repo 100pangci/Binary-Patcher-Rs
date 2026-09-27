@@ -161,6 +161,54 @@ else
 fi
 
 # ============================================================
+# 3b. 文件名映射 (rename-aware diff)
+# ============================================================
+echo
+echo "[3b/8] 文件名映射..."
+tm="$ws/map"
+mkdir -p "$tm/Old/data" "$tm/New/data"
+head -c 4096 /dev/urandom > "$tm/Old/data/script.pak"
+cp "$tm/Old/data/script.pak" "$tm/New/data/script.chs"
+head -c 128 /dev/urandom | dd of="$tm/New/data/script.chs" bs=1 seek=64 conv=notrunc 2>/dev/null
+cat > "$tm/file-map.json" <<'EOF'
+{
+  "mappings": [
+    { "old": "data/script.pak", "new": "data/script.chs" }
+  ]
+}
+EOF
+printf '\n' | "$bp" bundle --base-dir "$tm" >/dev/null 2>&1
+mmanifest="$tm/Patch/manifest.json"
+if [ -f "$mmanifest" ] \
+  && grep -q '"source_path": "data/script.pak"' "$mmanifest" \
+  && [ -f "$tm/Patch/data/script.chs.patch" ] \
+  && [ ! -f "$tm/Patch/data/script.chs.new" ]; then
+  P '映射 bundle: 生成差分而非新增'
+else
+  F '映射 bundle'
+fi
+
+mgame="$ws/map-game"
+mkdir -p "$mgame/data"
+cp "$tm/Old/data/script.pak" "$mgame/data/script.pak"
+cp -r "$tm/Patch" "$mgame/Patch"
+printf '\n' | "$apply" --base-dir "$mgame" >/dev/null 2>&1
+if [ -f "$mgame/data/script.chs" ] && [ ! -f "$mgame/data/script.pak" ] \
+  && [ "$(hash_file "$mgame/data/script.chs")" = "$(hash_file "$tm/New/data/script.chs")" ]; then
+  P '映射 apply: pak -> chs'
+else
+  F '映射 apply'
+fi
+
+printf 'y\n\n' | "$roll" --base-dir "$mgame" >/dev/null 2>&1
+if [ -f "$mgame/data/script.pak" ] && [ ! -f "$mgame/data/script.chs" ] \
+  && [ "$(hash_file "$mgame/data/script.pak")" = "$(hash_file "$tm/Old/data/script.pak")" ]; then
+  P '映射 rollback: 恢复 pak 删除 chs'
+else
+  F '映射 rollback'
+fi
+
+# ============================================================
 # 4. Stream + Fast
 # ============================================================
 if [ "$quick" -eq 0 ]; then

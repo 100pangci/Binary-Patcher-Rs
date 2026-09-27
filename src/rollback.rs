@@ -47,12 +47,47 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
     }
 
     for item in changed {
-        let target_path = resolve_safe_path(base_dir, &item.path)?;
-        println!("{}", t!("rollback.restore-changed", item.path));
-        if restore_backup(&target_path, base_dir, &backup_root)? {
-            restored_count += 1;
+        if item.is_renamed() {
+            let target_path = resolve_safe_path(base_dir, &item.path)?;
+            println!(
+                "{}",
+                t!(
+                    "rollback.restore-renamed",
+                    item.path,
+                    item.old_relative_path()
+                )
+            );
+
+            // 映射补丁不修改源文件，回滚只需撤销 target：
+            // 1. 删除补丁生成的 target（应用前 target 不存在时的产物）。
+            if target_path.exists() {
+                std::fs::remove_file(&target_path)?;
+                removed_count += 1;
+                println!("{}", t!("rollback.removed-file", target_path.display()));
+            }
+
+            // 2. 如果应用前 target 已存在，恢复其原始备份。
+            if restore_backup(&target_path, base_dir, &backup_root)? {
+                restored_count += 1;
+            }
+
+            // 3. 清理因删除 target 而变空的目录。
+            if let Some(parent) = target_path.parent() {
+                for dir in cleanup_empty_dirs(parent, base_dir)? {
+                    println!(
+                        "{}",
+                        t!("rollback.removed-empty-dir", display_path(&dir, base_dir))
+                    );
+                }
+            }
         } else {
-            println!("{}", t!("rollback.skip-no-backup"));
+            let target_path = resolve_safe_path(base_dir, &item.path)?;
+            println!("{}", t!("rollback.restore-changed", item.path));
+            if restore_backup(&target_path, base_dir, &backup_root)? {
+                restored_count += 1;
+            } else {
+                println!("{}", t!("rollback.skip-no-backup"));
+            }
         }
     }
 

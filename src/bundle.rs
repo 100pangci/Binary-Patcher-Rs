@@ -1,5 +1,6 @@
 use crate::cli::PatchFormat;
 use crate::cli::PatchMode;
+use crate::file_map::FileMap;
 use crate::fmt::format_size;
 use crate::fs::relative_maps;
 use crate::hash::sha256_of_file;
@@ -9,7 +10,8 @@ use crate::patch::patch_dir_for_name;
 use crate::path::ensure_parent_dir;
 use crate::t;
 use anyhow::Context;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 #[allow(clippy::needless_pass_by_value)]
 pub fn build_patch_bundle(
@@ -43,6 +45,9 @@ pub fn build_patch_bundle_with_name(
     let (old_files, old_dirs) = relative_maps(&old_dir);
     let (new_files, new_dirs) = relative_maps(&new_dir);
 
+    let file_map = crate::file_map::load_file_map(base_dir)?.unwrap_or_default();
+    crate::file_map::validate_file_map(&file_map, &old_dir, &new_dir)?;
+
     let fast_format = matches!(format, PatchFormat::Fast);
 
     let mut all_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -58,21 +63,86 @@ pub fn build_patch_bundle_with_name(
     let mut added_count = 0;
     let mut deleted_count = 0;
     let mut deleted_dirs_count = 0;
+    let mut patch_resources: BTreeSet<String> = BTreeSet::new();
 
     println!("{}", t!("bundle.scanning"));
 
+    // Step 1: 先处理显式映射，生成 rename-aware diff。
+    let mappings = resolve_mappings(&file_map, &old_files, &new_files)?;
+    let mut mapped_old: BTreeSet<String> = BTreeSet::new();
+    let mut mapped_new: BTreeSet<String> = BTreeSet::new();
+    for (old_rel, new_rel) in &mappings {
+        let old_file = old_files
+            .get(old_rel)
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", old_rel)))?;
+        let new_file = new_files
+            .get(new_rel)
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", new_rel)))?;
+
+        mapped_old.insert(old_rel.clone());
+        mapped_new.insert(new_rel.clone());
+        println!("{}", t!("bundle.mapping", old_rel, new_rel));
+
+        let patch_rel = format!("{new_rel}.patch");
+        if !patch_resources.insert(patch_rel.clone()) {
+            anyhow::bail!("{}", t!("bundle.patch-conflict", patch_rel));
+        }
+        let patch_output = patch_dir.join(&patch_rel);
+        let task = ChangeTask {
+            old_path: old_file.as_path(),
+            new_path: new_file.as_path(),
+            patch_output: &patch_output,
+            old_relative_path: old_rel,
+            new_relative_path: new_rel,
+            renamed: true,
+        };
+        if let Some(entry) = process_changed(&task, fast_format, &mode)? {
+            manifest.changed.push(entry);
+            changed_count += 1;
+        }
+    }
+
+    // 映射源路径若在 New 中仍存在（准备 New 时未删除旧名文件），
+    // 属于已由映射消费的文件，必须整体忽略；否则会被全量复制为“新增”。
+    for old_rel in &mapped_old {
+        if new_files.contains_key(old_rel) {
+            println!("{}", t!("bundle.mapping-source-leftover", old_rel));
+        }
+    }
+
+    // Step 2: 已参与映射的路径（源与目标）从普通扫描中整体排除，
+    // 避免误判为删除 + 新增，也避免映射目标被 deleted 再次删除。
     for relative_path in all_paths {
+        if mapped_old.contains(&relative_path) || mapped_new.contains(&relative_path) {
+            continue;
+        }
         let old_path = old_files.get(&relative_path);
         let new_path = new_files.get(&relative_path);
 
         match (old_path, new_path) {
+            (None, None) => {}
             (Some(old), Some(new)) => {
-                let patch_output = patch_dir.join(format!("{relative_path}.patch"));
-                let entry =
-                    process_changed(old, new, &patch_output, fast_format, &relative_path, &mode)?;
-                if let Some(entry) = entry {
-                    manifest.changed.push(entry);
-                    changed_count += 1;
+                let patch_rel = format!("{relative_path}.patch");
+                if !patch_resources.insert(patch_rel.clone()) {
+                    anyhow::bail!("{}", t!("bundle.patch-conflict", patch_rel));
+                }
+                let patch_output = patch_dir.join(&patch_rel);
+                let task = ChangeTask {
+                    old_path: old.as_path(),
+                    new_path: new.as_path(),
+                    patch_output: &patch_output,
+                    old_relative_path: &relative_path,
+                    new_relative_path: &relative_path,
+                    renamed: false,
+                };
+                match process_changed(&task, fast_format, &mode)? {
+                    Some(entry) => {
+                        manifest.changed.push(entry);
+                        changed_count += 1;
+                    }
+                    None => {
+                        patch_resources.remove(&patch_rel);
+                    }
                 }
             }
             (None, Some(new)) => {
@@ -97,7 +167,6 @@ pub fn build_patch_bundle_with_name(
                 });
                 deleted_count += 1;
             }
-            (None, None) => unreachable!(),
         }
     }
 
@@ -125,55 +194,130 @@ pub fn build_patch_bundle_with_name(
     Ok(())
 }
 
+/// 将 file-map.json 中的用户路径解析为实际扫描到的相对路径。
+///
+/// 完全匹配优先；Windows 文件系统大小写不敏感，因此额外做一次
+/// ASCII 大小写不敏感回退，避免因大小写差异漏掉映射。
+fn resolve_mappings(
+    file_map: &FileMap,
+    old_files: &BTreeMap<String, PathBuf>,
+    new_files: &BTreeMap<String, PathBuf>,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let mut mappings = Vec::with_capacity(file_map.mappings.len());
+    for mapping in &file_map.mappings {
+        let old_rel = find_scanned_key(old_files, &mapping.old_path())
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.old-not-found", mapping.old_path())))?;
+        let new_rel = find_scanned_key(new_files, &mapping.new_path())
+            .ok_or_else(|| anyhow::anyhow!(t!("filemap.new-not-found", mapping.new_path())))?;
+        mappings.push((old_rel, new_rel));
+    }
+    mappings.sort();
+    Ok(mappings)
+}
+
+fn find_scanned_key(files: &BTreeMap<String, PathBuf>, relative_path: &str) -> Option<String> {
+    if files.contains_key(relative_path) {
+        return Some(relative_path.to_string());
+    }
+    #[cfg(windows)]
+    {
+        files
+            .keys()
+            .find(|key| key.eq_ignore_ascii_case(relative_path))
+            .cloned()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+struct ChangeTask<'a> {
+    old_path: &'a Path,
+    new_path: &'a Path,
+    patch_output: &'a Path,
+    old_relative_path: &'a str,
+    new_relative_path: &'a str,
+    renamed: bool,
+}
+
 fn process_changed(
-    old: &Path,
-    new: &Path,
-    patch_output: &Path,
+    task: &ChangeTask<'_>,
     fast_format: bool,
-    relative_path: &str,
     mode: &PatchMode,
 ) -> anyhow::Result<Option<ChangedEntry>> {
-    let old_hash = sha256_of_file(old)?;
-    let new_hash = sha256_of_file(new)?;
-    if old_hash == new_hash {
+    let old_hash = sha256_of_file(task.old_path)?;
+    let new_hash = sha256_of_file(task.new_path)?;
+    if old_hash == new_hash && !task.renamed {
         return Ok(None);
     }
-    println!("{}", t!("bundle.changed", relative_path));
 
-    let old_size = std::fs::metadata(old)?.len();
-    let new_size = std::fs::metadata(new)?.len();
+    if task.renamed {
+        println!(
+            "{}",
+            t!(
+                "bundle.mapped-changed",
+                task.old_relative_path,
+                task.new_relative_path
+            )
+        );
+        if old_hash == new_hash {
+            println!(
+                "{}",
+                t!(
+                    "bundle.mapped-same-hash",
+                    task.old_relative_path,
+                    task.new_relative_path
+                )
+            );
+        }
+    } else {
+        println!("{}", t!("bundle.changed", task.new_relative_path));
+    }
+
+    let old_size = std::fs::metadata(task.old_path)?.len();
+    let new_size = std::fs::metadata(task.new_path)?.len();
 
     let thread_count = match mode {
         PatchMode::Stream => {
             if !fast_format {
                 eprintln!("{}", t!("hdiff.stream-fast-forced"));
             }
-            run_hdiffz_stream(old, new, patch_output, get_diff_thread_count(), true)
-                .map_err(|e| anyhow::anyhow!("{e}"))?
+            run_hdiffz_stream(
+                task.old_path,
+                task.new_path,
+                task.patch_output,
+                get_diff_thread_count(),
+                true,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
         }
         PatchMode::Memory => {
-            let old_data =
-                std::fs::read(old).with_context(|| t!("bundle.failed-read-old", old.display()))?;
-            let new_data =
-                std::fs::read(new).with_context(|| t!("bundle.failed-read-new", new.display()))?;
+            let old_data = std::fs::read(task.old_path)
+                .with_context(|| t!("bundle.failed-read-old", task.old_path.display()))?;
+            let new_data = std::fs::read(task.new_path)
+                .with_context(|| t!("bundle.failed-read-new", task.new_path.display()))?;
             run_hdiffz_mem(
                 &old_data,
                 &new_data,
-                patch_output,
+                task.patch_output,
                 get_diff_thread_count(),
                 fast_format,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?
         }
-        PatchMode::Auto => run_hdiffz(old, new, patch_output, fast_format)?,
+        PatchMode::Auto => {
+            run_hdiffz(task.old_path, task.new_path, task.patch_output, fast_format)?
+        }
     };
 
-    print_patch_result(old_size, new_size, patch_output, thread_count)?;
+    print_patch_result(old_size, new_size, task.patch_output, thread_count)?;
     Ok(Some(ChangedEntry {
-        path: relative_path.to_string(),
+        path: task.new_relative_path.to_string(),
+        source_path: task.renamed.then(|| task.old_relative_path.to_string()),
         old_sha256: old_hash,
         new_sha256: new_hash,
-        patch_file: format!("{relative_path}.patch"),
+        patch_file: format!("{}.patch", task.new_relative_path),
     }))
 }
 

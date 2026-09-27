@@ -11,6 +11,7 @@ Powered by [HDiffPatch](https://github.com/sisong/HDiffPatch) via FFI static lin
 
 - **Single-file patch** — create / apply a patch between two files
 - **Directory bundle** — compare `Old/` vs `New/`, auto-generate `manifest.json` + patches + new files
+- **File-name mappings** — declare `Old/A -> New/B` in an optional `file-map.json` to diff renamed files instead of delete + add
 - **One-click apply** — `apply_patch` reads the manifest, verifies SHA256, backs up originals, applies patches
 - **One-click rollback** — `rollback_patch` restores backups and removes added files
 - **Adaptive memory/streaming** — `--mode auto` tries in-memory first, auto-falls back to streaming per file on OOM
@@ -115,6 +116,70 @@ The tool:
 
 Restores `*.backup_before_patch` backups and removes files that were added by the patch.
 
+### 4. File-name mappings (rename-aware diff)
+
+Some localization or refactoring work also changes file names (for example, an extension
+changes from `.pak` to `.chs`). By default the tool treats those as "delete the old file +
+add the new file", and the new file is copied in full into the patch bundle. To make the
+tool treat two different paths as the same logical file and produce a binary diff instead,
+place an optional `file-map.json` in the workspace root and declare the mapping explicitly:
+
+```text
+Old/
+└── data/
+    └── script.pak
+
+New/
+└── data/
+    └── script.chs
+
+file-map.json
+```
+
+```json
+{
+  "mappings": [
+    {
+      "old": "data/script.pak",
+      "new": "data/script.chs"
+    }
+  ]
+}
+```
+
+This makes Binary Patcher diff the two paths as one logical file rather than reporting the
+old file as deleted and the new file as added. The generated manifest entry looks like:
+
+```json
+{
+  "path": "data/script.chs",
+  "source_path": "data/script.pak",
+  "old_sha256": "...",
+  "new_sha256": "...",
+  "patch_file": "data/script.chs.patch"
+}
+```
+
+- On apply: the mapping source is used **only as the diff input and is never modified,
+  backed up or deleted**; the target is produced from the diff (an existing target is backed
+  up first) and verified against SHA256.
+- On rollback: the target is removed, or its original content restored if it existed before
+  apply. The source file is always left untouched.
+- Mapped source/target paths are **excluded entirely** from the ordinary scan: a mapping-source
+  file that remains in `New/` (for example `grp.aos`) is treated as unchanged, is never copied
+  in full as an added file, and still exists after apply.
+- If the mapping target already exists in `Old/`, its content is overwritten by the mapping
+  result (backed up before apply, restored on rollback) instead of being misreported as deleted.
+- Identical content with only a different name is supported too (a minimal diff patch is generated).
+- Mappings are **never guessed**: the tool does not infer them from file names, extensions,
+  sizes or hashes.
+- Paths are relative to `Old/` and `New/`, using `/` separators (Windows `\` is normalized).
+- Validation is strict: both files must exist; one old file cannot map to multiple new files
+  and multiple old files cannot map to one new file; `old == new` is rejected with a hint to
+  remove the entry; chained mappings (A→B and B→C) are rejected.
+- Path safety reuses the existing checks: `../`, absolute paths, symlinks and escapes are rejected.
+- Without `file-map.json`, behavior is exactly the same as before (opt-in).
+
 ## CLI Reference
 
 ### `binary_patcher`
@@ -181,6 +246,7 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 │   │   └── rollback_patch.rs# rollback_patch entry point
 │   ├── cli.rs               # CLI argument parsing (clap)
 │   ├── ffi.rs               # HDiffPatch C library FFI bindings
+│   ├── file_map.rs          # file-map.json loading and explicit mapping validation
 │   ├── fmt.rs               # Formatting utilities (file size, terminal pause)
 │   ├── fs.rs                # Filesystem traversal and mapping
 │   ├── hash.rs              # SHA256 hashing
@@ -196,9 +262,11 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
     ├── unit_hash.rs        # SHA256 unit tests
     ├── unit_path.rs        # Safe path resolution unit tests
     ├── unit_fs.rs          # Filesystem traversal/mapping unit tests
+    ├── unit_file_map.rs    # file-map.json loading/validation unit tests
     ├── unit_manifest.rs    # Manifest validation/loading unit tests
     ├── unit_backup.rs      # Backup/restore unit tests
-    └── workflow.rs         # End-to-end integration tests (39 tests)
+    ├── workflow.rs         # End-to-end integration tests
+    └── workflow_mapping.rs # File-name mapping end-to-end integration tests
 ```
 
 ## Security
@@ -206,7 +274,8 @@ Restores `*.backup_before_patch` backups and removes files that were added by th
 | Feature | Description |
 |---------|-------------|
 | **Path traversal protection** | All manifest paths are validated; `../` escape attempts are rejected |
-| **Manifest validation** | Schema, field types, and format version are verified on load |
+| **Manifest validation** | Schema, field types, and format version are verified on load; duplicate patch resources are rejected |
+| **Mapping validation** | `file-map.json` enforces one-to-one mappings, file existence and path safety; mappings are never guessed |
 | **SHA256 verification** | Files are hashed before and after patching; mismatches trigger automatic rollback |
 | **Safe backups** | Backups use `.backup_before_patch` suffix; existing backups get a timestamp suffix |
 

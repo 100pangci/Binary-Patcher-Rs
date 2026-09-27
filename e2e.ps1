@@ -140,6 +140,48 @@ if ($LASTEXITCODE -eq 0 -and $chg -ge 4 -and $add -ge 3 -and $del -ge 3 -and $dd
 } else { F "Auto bundle (chg=$chg add=$add del=$del dir=$dd)" }
 
 # ============================================================
+# 3b. 文件名映射 (rename-aware diff)
+# ============================================================
+Write-Host "`n[3b/8] 文件名映射..." -F Yellow
+$tm = "$ws\map"
+New-Item -ItemType Directory -Path "$tm\Old\data" -Force | Out-Null
+New-Item -ItemType Directory -Path "$tm\New\data" -Force | Out-Null
+$mold = RandBytes 4096
+WriteBin "$tm\Old\data\script.pak" $mold
+$mnew = [byte[]]::new($mold.Length)
+[Array]::Copy($mold, $mnew, $mold.Length)
+$mdiff = RandBytes 128
+for ($i = 0; $i -lt 128; $i++) { $mnew[64 + $i] = $mdiff[$i] }
+WriteBin "$tm\New\data\script.chs" $mnew
+@'
+{
+  "mappings": [
+    { "old": "data/script.pak", "new": "data/script.chs" }
+  ]
+}
+'@ | Out-File "$tm\file-map.json" -Encoding UTF8
+$null = "`n" | & $bp bundle --base-dir $tm 2>&1
+$mmanifest = if (Test-Path "$tm\Patch\manifest.json") { Get-Content "$tm\Patch\manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+$mok = $mmanifest -and $mmanifest.changed.Count -eq 1 -and $mmanifest.added.Count -eq 0 -and $mmanifest.deleted.Count -eq 0 `
+    -and $mmanifest.changed[0].path -eq 'data/script.chs' -and $mmanifest.changed[0].source_path -eq 'data/script.pak' `
+    -and (Test-Path "$tm\Patch\data\script.chs.patch") -and -not (Test-Path "$tm\Patch\data\script.chs.new")
+if ($mok) { P '映射 bundle: 生成差分而非新增' } else { F '映射 bundle' }
+
+$mgame = "$ws\map-game"
+New-Item -ItemType Directory -Path "$mgame\data" -Force | Out-Null
+Copy-Item "$tm\Old\data\script.pak" "$mgame\data\script.pak"
+Copy-Item -LiteralPath "$tm\Patch" "$mgame\Patch" -Recurse
+$null = "`n" | & $apply --base-dir $mgame 2>&1
+if ((Test-Path "$mgame\data\script.chs") -and -not (Test-Path "$mgame\data\script.pak") -and (HashFile "$mgame\data\script.chs") -eq (HashFile "$tm\New\data\script.chs")) {
+    P '映射 apply: pak -> chs'
+} else { F '映射 apply' }
+
+$null = "y`n`n" | & $roll --base-dir $mgame 2>&1
+if ((Test-Path "$mgame\data\script.pak") -and -not (Test-Path "$mgame\data\script.chs") -and (HashFile "$mgame\data\script.pak") -eq (HashFile "$tm\Old\data\script.pak")) {
+    P '映射 rollback: 恢复 pak 删除 chs'
+} else { F '映射 rollback' }
+
+# ============================================================
 # 4. Stream + Fast
 # ============================================================
 if (-not $Quick) {

@@ -4,7 +4,7 @@ use crate::backup::{
 use crate::fs::{cleanup_empty_dirs, copy_file};
 use crate::hash::{sha256_of_bytes, sha256_of_file};
 use crate::hdiffpatch::{apply_patch_auto, run_hpatchz};
-use crate::manifest::Manifest;
+use crate::manifest::{ChangedEntry, Manifest};
 use crate::path::{ensure_parent_dir, resolve_safe_path};
 use crate::t;
 use serde::{Deserialize, Serialize};
@@ -18,18 +18,47 @@ pub const JOURNAL_FILE_NAME: &str = ".apply_journal.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum JournalEntrySer {
-    Patched { path: String },
-    Added { path: String, had_backup: bool },
-    Deleted { path: String },
-    DeletedDir { path: String },
+    Patched {
+        path: String,
+    },
+    Added {
+        path: String,
+        had_backup: bool,
+    },
+    Deleted {
+        path: String,
+    },
+    DeletedDir {
+        path: String,
+    },
+    /// 映射补丁：`source -> target` 的路径迁移。
+    RenamedPatched {
+        source: String,
+        target: String,
+        target_had_backup: bool,
+    },
 }
 
 #[derive(Debug)]
 enum JournalEntry {
-    Patched { target: PathBuf },
-    Added { target: PathBuf, had_backup: bool },
-    Deleted { target: PathBuf },
-    DeletedDir { target: PathBuf },
+    Patched {
+        target: PathBuf,
+    },
+    Added {
+        target: PathBuf,
+        had_backup: bool,
+    },
+    Deleted {
+        target: PathBuf,
+    },
+    DeletedDir {
+        target: PathBuf,
+    },
+    RenamedPatched {
+        source: PathBuf,
+        target: PathBuf,
+        target_had_backup: bool,
+    },
 }
 
 struct ChangeJournal {
@@ -74,6 +103,15 @@ impl ChangeJournal {
                 JournalEntry::DeletedDir { target } => JournalEntrySer::DeletedDir {
                     path: rel_path_of(&self.base_dir, target),
                 },
+                JournalEntry::RenamedPatched {
+                    source,
+                    target,
+                    target_had_backup,
+                } => JournalEntrySer::RenamedPatched {
+                    source: rel_path_of(&self.base_dir, source),
+                    target: rel_path_of(&self.base_dir, target),
+                    target_had_backup: *target_had_backup,
+                },
             })
             .collect();
 
@@ -95,9 +133,9 @@ impl ChangeJournal {
                     had_backup: true,
                 } => {
                     if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
-                        eprintln!("  [rollback] {}: {e}", target.display());
+                        eprintln!("{}", t!("journal.error", target.display(), e));
                     } else {
-                        println!("  [rollback] restored: {}", target.display());
+                        println!("{}", t!("journal.restored", target.display()));
                     }
                 }
                 JournalEntry::Added {
@@ -106,9 +144,9 @@ impl ChangeJournal {
                 } => {
                     if target.exists() {
                         if let Err(e) = std::fs::remove_file(target) {
-                            eprintln!("  [rollback] remove {}: {e}", target.display());
+                            eprintln!("{}", t!("journal.error", target.display(), e));
                         } else {
-                            println!("  [rollback] removed: {}", target.display());
+                            println!("{}", t!("journal.removed", target.display()));
                         }
                     }
                     if let Some(parent) = target.parent() {
@@ -118,15 +156,40 @@ impl ChangeJournal {
                 JournalEntry::DeletedDir { target } => {
                     if !target.exists() {
                         if let Err(e) = std::fs::create_dir_all(target) {
-                            eprintln!("  [rollback] recreate dir {}: {e}", target.display());
+                            eprintln!("{}", t!("journal.error", target.display(), e));
                         } else {
-                            println!("  [rollback] recreated dir: {}", target.display());
+                            println!("{}", t!("journal.recreated-dir", target.display()));
+                        }
+                    }
+                }
+                JournalEntry::RenamedPatched {
+                    target,
+                    target_had_backup,
+                    ..
+                } => {
+                    // 映射补丁不修改源文件，回滚只需撤销 target。
+                    // target_had_backup 为 false 时 target 是本次 patch 的产物，直接删除；
+                    // 为 true 时 target 在应用前已存在，必须从备份恢复原文件。
+                    if *target_had_backup {
+                        if let Err(e) = restore_backup(target, &self.base_dir, &self.backup_root) {
+                            eprintln!("{}", t!("journal.error", target.display(), e));
+                        } else {
+                            println!("{}", t!("journal.restored", target.display()));
+                        }
+                    } else if target.exists() {
+                        if let Err(e) = std::fs::remove_file(target) {
+                            eprintln!("{}", t!("journal.error", target.display(), e));
+                        } else {
+                            println!("{}", t!("journal.removed", target.display()));
+                        }
+                        if let Some(parent) = target.parent() {
+                            let _ = cleanup_empty_dirs(parent, &self.base_dir);
                         }
                     }
                 }
             }
         }
-        println!("  [rollback] All changes have been undone.");
+        println!("{}", t!("journal.rollback-complete"));
     }
 }
 
@@ -156,6 +219,15 @@ fn load_journal(journal_path: &Path, base_dir: &Path) -> anyhow::Result<Vec<Jour
             }),
             JournalEntrySer::DeletedDir { path } => Ok(JournalEntry::DeletedDir {
                 target: resolve_safe_path(base_dir, &path)?,
+            }),
+            JournalEntrySer::RenamedPatched {
+                source,
+                target,
+                target_had_backup,
+            } => Ok(JournalEntry::RenamedPatched {
+                source: resolve_safe_path(base_dir, &source)?,
+                target: resolve_safe_path(base_dir, &target)?,
+                target_had_backup,
             }),
         })
         .collect()
@@ -341,33 +413,52 @@ fn apply_changed_files(
     let total = manifest.changed.len();
     for (idx, item) in manifest.changed.iter().enumerate() {
         let target_path = resolve_safe_path(base_dir, &item.path)?;
+        let source_relative = item.old_relative_path();
+        let source_path = resolve_safe_path(base_dir, source_relative)?;
+        let renamed = item.is_renamed();
         let patch_file = resolve_safe_path(patch_dir, &item.patch_file)?;
 
-        if !target_path.exists() {
-            eprintln!("{}", t!("apply.missing-old", target_path.display()));
+        if !source_path.exists() {
+            eprintln!("{}", t!("apply.missing-old", source_path.display()));
             eprintln!("{}", t!("apply.missing-hint", idx, total));
             eprintln!("{}", t!("apply.missing-hint-restore"));
-            anyhow::bail!("{}", t!("apply.missing-bail", idx + 1, total, item.path))
+            anyhow::bail!(
+                "{}",
+                t!("apply.missing-bail", idx + 1, total, source_relative)
+            )
         }
 
-        let old_data = std::fs::read(&target_path).map_err(|e| {
+        let old_data = std::fs::read(&source_path).map_err(|e| {
             anyhow::anyhow!(
                 "{} {}",
-                t!("bundle.failed-read-old", target_path.display()),
+                t!("bundle.failed-read-old", source_path.display()),
                 e
             )
         })?;
 
         let current_hash = sha256_of_bytes(&old_data);
         if current_hash != item.old_sha256 {
-            eprintln!("{}", t!("apply.sha256-mismatch", item.path));
+            eprintln!("{}", t!("apply.sha256-mismatch", source_relative));
             eprintln!("{}", t!("apply.sha256-current", current_hash));
             eprintln!("{}", t!("apply.sha256-expected", item.old_sha256));
             eprintln!("{}", t!("apply.missing-hint", idx, total));
             anyhow::bail!("{}", t!("apply.sha256-bail", idx + 1, total))
         }
 
-        let backup_path = write_backup(&old_data, &target_path, base_dir, &journal.backup_root)?;
+        if renamed {
+            apply_renamed_change(
+                base_dir,
+                &patch_file,
+                item,
+                &source_path,
+                &target_path,
+                old_data,
+                journal,
+            )?;
+            continue;
+        }
+
+        let backup_path = write_backup(&old_data, &source_path, base_dir, &journal.backup_root)?;
         let backup_name = backup_path
             .file_name()
             .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
@@ -407,6 +498,65 @@ fn apply_changed_files(
             anyhow::bail!("{}", t!("apply.sha256-fail-auto-restore", item.path));
         }
     }
+    Ok(())
+}
+
+/// 应用映射补丁：source 仅作为差分输入，**绝不修改、备份或删除**。
+///
+/// 目标路径可能已存在（例如 `Old/` 中已有同名文件，或用户目录里本来就有），
+/// 此时先备份再覆盖；回滚时删除/恢复目标，源文件始终原样保留。
+fn apply_renamed_change(
+    base_dir: &Path,
+    patch_file: &Path,
+    item: &ChangedEntry,
+    source_path: &Path,
+    target_path: &Path,
+    old_data: Vec<u8>,
+    journal: &mut ChangeJournal,
+) -> anyhow::Result<()> {
+    println!(
+        "{}",
+        t!("apply.renamed-changed", item.old_relative_path(), item.path)
+    );
+    println!(
+        "{}",
+        t!("apply.rename-source-kept", item.old_relative_path())
+    );
+
+    let target_had_backup = if target_path.exists() {
+        let target_backup_name = create_backup(target_path, base_dir, &journal.backup_root)?
+            .file_name()
+            .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().to_string());
+        println!("{}", t!("apply.target-exists-backup", target_backup_name));
+        true
+    } else {
+        false
+    };
+
+    journal.push(JournalEntry::RenamedPatched {
+        source: source_path.to_path_buf(),
+        target: target_path.to_path_buf(),
+        target_had_backup,
+    })?;
+
+    let patch_data = std::fs::read(patch_file)
+        .map_err(|e| anyhow::anyhow!("{}: {}", patch_file.display(), e))?;
+
+    let thread_count = crate::hdiffpatch::get_recommended_thread_count();
+
+    let new_data = apply_patch_auto(old_data, source_path, patch_data, target_path, thread_count)?;
+
+    let new_hash = sha256_of_bytes(&new_data);
+    if new_hash != item.new_sha256 {
+        // 只撤销 target；源文件始终未被改动。
+        if target_had_backup {
+            let _ = restore_backup(target_path, base_dir, &journal.backup_root);
+        } else if target_path.exists() {
+            let _ = std::fs::remove_file(target_path);
+        }
+        anyhow::bail!("{}", t!("apply.sha256-fail-auto-restore", item.path));
+    }
+
     Ok(())
 }
 
