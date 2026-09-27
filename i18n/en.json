@@ -47,6 +47,7 @@
   "bundle.mapped-changed": "[Diff] {0} -> {1}",
   "bundle.mapped-same-hash": "  Identical content, rename only (minimal patch generated)",
   "bundle.patch-conflict": "Patch resource path conflict: {0}",
+  "bundle.case-only-change": "Path differs only by letter case on Windows: {0} -> {1}\nThe ordinary scan would misdetect it as delete + add and may delete the same file; case-only renames are not supported yet, make the paths in Old/New match.",
   "bundle.added": "[Added] {0}",
   "bundle.deleted": "[Deleted] {0}",
   "bundle.deleted-dir": "[Deleted Directory] {0}",

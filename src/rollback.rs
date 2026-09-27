@@ -31,6 +31,10 @@ pub fn rollback_bundle_at(base_dir: &Path, patch_dir: &Path) -> anyhow::Result<(
         crate::path::ensure_no_symlink_components(&journal_path)?;
         if journal_path.exists() {
             crate::apply::rollback_from_journal(base_dir, patch_dir)?;
+            // apply 已完成、marker 已写入但 journal 尚未删除时崩溃：
+            // 恢复成功后一并清除残留 marker，否则会阻止再次 apply。
+            // marker 不存在时安全忽略。
+            crate::patch::remove_applied_marker(patch_dir)?;
             return Ok(());
         }
         if crate::patch::load_applied_marker(patch_dir)?.is_none() {

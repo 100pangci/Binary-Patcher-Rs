@@ -47,6 +47,7 @@
   "bundle.mapped-changed": "[差分] {0} -> {1}",
   "bundle.mapped-same-hash": "  内容相同，仅重命名（生成最小补丁）",
   "bundle.patch-conflict": "补丁资源路径冲突: {0}",
+  "bundle.case-only-change": "Windows 下路径仅大小写不同: {0} -> {1}\n普通扫描会把它误判为「删除 + 新增」并可能删掉同一文件；暂不支持仅大小写重命名，请统一 Old/New 中的路径大小写。",
   "bundle.added": "[新增] {0}",
   "bundle.deleted": "[删除] {0}",
   "bundle.deleted-dir": "[删除目录] {0}",

@@ -3,9 +3,9 @@
 //! 工作目录根目录下的可选文件 `file-map.json` 允许用户手动声明
 //! `Old/<old>` 与 `New/<new>` 属于同一个逻辑文件。mapping source 作为差分
 //! 基础文件，整包补丁会用它为 target 生成二进制差分（而不是识别为
-//! 「删除 + 新增」），apply / rollback / journal 崩溃恢复只负责 target；
-//! source 默认原样保留，仅当 `delete_source=true` 时在 target 校验成功后
-//! 删除（删除前先备份，可回滚恢复）。
+//! 「删除 + 新增」）。apply / rollback / journal 崩溃恢复会同时维护 source
+//! 与 target：source 默认保持原样，仅当 `delete_source=true` 时在 target
+//! 校验成功后删除（删除前先备份，可回滚恢复）。
 //!
 //! 映射完全显式：程序不会根据文件名、basename、扩展名、大小或哈希
 //! 自动猜测映射关系。`file-map.json` 不存在时行为与旧版本完全一致。

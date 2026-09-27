@@ -143,6 +143,23 @@ pub fn build_patch_bundle_with_name(
         }
     }
 
+    // Windows 下同一路径仅大小写不同的普通文件会被扫描误判为 deleted + added：
+    // apply 会先写入新路径（同一物理文件），再按旧路径删除，最终删掉刚写入的文件。
+    // 映射路径（源与目标）已由比较键单独处理，其余情况在扫描阶段直接拒绝；
+    // 暂不支持 case-only rename，请统一 Old/New 中的路径大小写。
+    #[cfg(windows)]
+    for old_rel in old_files.keys() {
+        let old_key = comparison_key(old_rel);
+        if mapped_old_keys.contains(&old_key) || mapped_new_keys.contains(&old_key) {
+            continue;
+        }
+        if let Some(new_rel) = find_scanned_key(&new_files, old_rel)
+            && new_rel.as_str() != old_rel.as_str()
+        {
+            anyhow::bail!("{}", t!("bundle.case-only-change", old_rel, new_rel));
+        }
+    }
+
     // Step 2: 已参与映射的路径（源与目标）从普通扫描中整体排除，
     // 避免误判为删除 + 新增，也避免映射目标被 deleted 再次删除。
     for relative_path in all_paths {

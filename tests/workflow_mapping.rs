@@ -1128,9 +1128,75 @@ fn test_rollback_mapping_with_journal_uses_crash_recovery() {
     );
 }
 
+#[test]
+fn test_rollback_mapping_with_marker_and_journal_clears_both() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "foo.aos", b"old source payload");
+    write_file(base, "New", "foo.chs", b"new target payload");
+    write_mapping_file(base, &[("foo.aos", "foo.chs")]);
+    build_bundle(base);
+
+    let game = setup_game(base);
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+    assert!(
+        game.join("Patch/.applied_patch.json").exists(),
+        "apply must create the marker"
+    );
+
+    // 模拟 apply 已写 marker、journal 还没删就崩溃。
+    write_renamed_journal(&game.join("Patch"), "foo.aos", "foo.chs", false);
+
+    binary_patcher::rollback::rollback_bundle(&game).unwrap();
+
+    assert!(
+        !game.join("Patch/.applied_patch.json").exists(),
+        "marker must be cleared after journal recovery"
+    );
+    assert!(
+        !game
+            .join("Patch")
+            .join(binary_patcher::apply::JOURNAL_FILE_NAME)
+            .exists(),
+        "journal must be cleared after recovery"
+    );
+    assert!(!game.join("foo.chs").exists());
+    assert_eq!(
+        std::fs::read(game.join("foo.aos")).unwrap(),
+        b"old source payload"
+    );
+
+    // marker 已清除，允许再次 apply。
+    binary_patcher::apply::apply_bundle(&game).unwrap();
+    assert_eq!(
+        std::fs::read(game.join("foo.chs")).unwrap(),
+        b"new target payload"
+    );
+    assert!(game.join("Patch/.applied_patch.json").exists());
+}
+
 // ===========================================================================
 // Windows case-insensitive matching consistency (comparison key)
 // ===========================================================================
+
+#[cfg(windows)]
+#[test]
+fn test_bundle_rejects_case_only_path_change() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    write_file(base, "Old", "Foo.bin", b"payload before");
+    write_file(base, "New", "foo.bin", b"payload after");
+
+    let err = try_build_bundle(base).unwrap_err();
+    assert!(
+        err.to_string().contains("bundle.case-only-change"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !base.join("Patch/manifest.json").exists(),
+        "rejected bundle must not leave a dangerous manifest"
+    );
+}
 
 #[cfg(windows)]
 #[test]

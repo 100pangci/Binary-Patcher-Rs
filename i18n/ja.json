@@ -47,6 +47,7 @@
   "bundle.mapped-changed": "[差分] {0} -> {1}",
   "bundle.mapped-same-hash": "  内容が同一のためリネームのみ（最小パッチを生成）",
   "bundle.patch-conflict": "パッチリソースのパスが競合しています: {0}",
+  "bundle.case-only-change": "Windows では大文字小文字のみ異なるパス: {0} -> {1}\n通常スキャンでは「削除 + 追加」と誤判定され、同一ファイルが削除される可能性があります。大文字小文字のみのリネームは未対応のため、Old/New のパス表記を統一してください。",
   "bundle.added": "[追加] {0}",
   "bundle.deleted": "[削除] {0}",
   "bundle.deleted-dir": "[ディレクトリ削除] {0}",

@@ -3,7 +3,7 @@
 ## [v1.4.0] — 2026-09-27
 
 ### Added
-- **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 作为差分基础文件，为 target 生成二进制差分而非「删除 + 新增」；source 默认原样保留，`delete_source=true` 时在目标校验成功后删除（删除前先备份，rollback 可恢复），apply / rollback / journal 崩溃恢复只负责 target
+- **显式文件名映射（mapping-aware diff）**：工作目录根目录可选 `file-map.json` 手动声明 `Old/<old> -> New/<new>` 属于同一逻辑文件。source 作为差分基础文件，为 target 生成二进制差分而非「删除 + 新增」；source 默认原样保留，`delete_source=true` 时在目标校验成功后删除（删除前先备份，rollback 可恢复），apply / rollback / journal 崩溃恢复在需要时一并维护 source 与 target
 - 映射严格校验：空路径、`old == new`、重复 old/new、链式映射（A→B 且 B→C）全部拒绝；文件存在性、`../`、绝对路径、符号链接防护复用现有安全机制
 - 每条映射可选 `delete_source`（默认 `false`）：为 `true` 时在目标生成并通过 SHA256 校验后删除源文件（删除前先备份，rollback 可恢复）
 - 映射路径「比较键」机制：统一 `\`、移除 `.`、折叠重复分隔符，Windows 下大小写不敏感（仅用于比较，实际访问路径保留原始大小写）
@@ -21,6 +21,8 @@
 - Manifest / apply 双重校验映射 source 与 target 不能解析到同一实际文件：规范化（`./`、重复分隔符）、Windows 大小写等价与 canonicalize 兜底均拒绝，且检查发生在任何备份 / 写 target / 删 source 之前
 - Windows 下映射的大小写不敏感匹配统一使用 comparison key：`mapped_old` / `mapped_new` 排除、`New` 中映射源存在性与内容变化检测、映射源目录删除判断不再漏判
 - 包含 mapping 的 manifest 在既无 journal 又无有效 `.applied_patch.json` 时拒绝 rollback（不修改任何文件），避免未应用过就回滚误删 target；有 journal 时仍按崩溃恢复处理
+- marker 与 journal 同时残留（apply 写标记后、删日志前崩溃）时，journal 恢复成功后一并清除 marker，之后可再次 apply
+- Windows 下 `Old` / `New` 出现同一路径仅大小写不同的普通文件时直接拒绝生成补丁，避免被误判为「删除 + 新增」后删掉同一物理文件（暂不支持 case-only rename）
 
 ## [v1.3.1] — 2026-09-09
 
